@@ -177,16 +177,6 @@ function App() {
 
     return (
         <div className="app">
-            {/* Header */}
-            <header className="header">
-                <div className="header-logo-container">
-                    <img src={logo} alt="Voyagerr Logo" className="header-logo" />
-                </div>
-                <div>
-                    <h1 className="header-title">Voyagerr Lens</h1>
-                    <p className="header-subtitle">Analyze code metrics and test coverage</p>
-                </div>
-            </header>
 
             {/* Error Banner */}
             {error && (
