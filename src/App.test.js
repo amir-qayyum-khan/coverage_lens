@@ -133,7 +133,7 @@ describe('App Component', () => {
         // Wait for analysis to complete (loading overlay to disappear)
         await waitFor(() => {
             expect(screen.queryByText(/analyzing/i)).not.toBeInTheDocument();
-        }, { timeout: 10000 });
+        }, { timeout: 3000 });
 
         await waitFor(() => {
             // Check for total testable lines (100)
@@ -142,6 +142,6 @@ describe('App Component', () => {
             expect(screen.getAllByText(/80/).length).toBeGreaterThan(0);
             // Check for total testable statements (50)
             expect(screen.getAllByText(/50/).length).toBeGreaterThan(0);
-        }, { timeout: 5000 });
+        }, { timeout: 2000 });
     });
 });

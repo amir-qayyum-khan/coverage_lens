@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import AnalysisLoader from './AnalysisLoader';
 
 describe('AnalysisLoader', () => {
@@ -8,7 +8,9 @@ describe('AnalysisLoader', () => {
     });
 
     afterEach(() => {
-        jest.runOnlyPendingTimers();
+        act(() => {
+            jest.runOnlyPendingTimers();
+        });
         jest.useRealTimers();
     });
 
@@ -27,17 +29,23 @@ describe('AnalysisLoader', () => {
 
         expect(screen.getByText('0:00')).toBeInTheDocument();
 
-        jest.advanceTimersByTime(1000);
+        act(() => {
+            jest.advanceTimersByTime(1000);
+        });
         expect(screen.getByText('0:01')).toBeInTheDocument();
 
-        jest.advanceTimersByTime(1000);
+        act(() => {
+            jest.advanceTimersByTime(1000);
+        });
         expect(screen.getByText('0:02')).toBeInTheDocument();
     });
 
     it('formats time correctly for minutes', () => {
         render(<AnalysisLoader loadingMessage="Testing..." />);
 
-        jest.advanceTimersByTime(65000); // 1 minute 5 seconds
+        act(() => {
+            jest.advanceTimersByTime(65000); // 1 minute 5 seconds
+        });
         expect(screen.getByText('1:05')).toBeInTheDocument();
     });
 
@@ -53,12 +61,16 @@ describe('AnalysisLoader', () => {
         expect(screen.getByText(/analyzing folder structure/i)).toBeInTheDocument();
 
         // After 60 seconds
-        jest.advanceTimersByTime(60000);
+        act(() => {
+            jest.advanceTimersByTime(60000);
+        });
         rerender(<AnalysisLoader loadingMessage="Testing..." />);
         expect(screen.getByText(/analyzing code metrics/i)).toBeInTheDocument();
 
         // After 120 seconds
-        jest.advanceTimersByTime(60000);
+        act(() => {
+            jest.advanceTimersByTime(60000);
+        });
         rerender(<AnalysisLoader loadingMessage="Testing..." />);
         expect(screen.getByText(/analyzing test coverage/i)).toBeInTheDocument();
     });
@@ -75,3 +87,4 @@ describe('AnalysisLoader', () => {
         expect(particles.length).toBe(12);
     });
 });
+

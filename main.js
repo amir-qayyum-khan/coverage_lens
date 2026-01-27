@@ -4,8 +4,10 @@ const fs = require('fs');
 const XLSX = require('xlsx');
 const { analyzeFolder } = require('./src/services/codeAnalyzer');
 const { runCoverage } = require('./src/services/coverageRunner');
+const { checkNodeInstalled, checkPackagesInstalled, installNode, TARGET_NODE_VERSION } = require('./src/services/nodeInstaller');
 
 let mainWindow;
+let nodeInstallProgress = null;
 
 function createMenu() {
     const template = [
@@ -200,6 +202,53 @@ ipcMain.handle('export:excel', async (event, { summary, files }) => {
         return { success: true, path: filePath };
     } catch (error) {
         console.error('Excel export error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Check if Node.js is installed
+ipcMain.handle('node:check', async () => {
+    try {
+        const nodeStatus = checkNodeInstalled();
+        return {
+            success: true,
+            data: {
+                ...nodeStatus,
+                targetVersion: TARGET_NODE_VERSION
+            }
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Check if packages are installed in a project
+ipcMain.handle('node:checkPackages', async (event, projectPath) => {
+    try {
+        const packageStatus = checkPackagesInstalled(projectPath);
+        return {
+            success: true,
+            data: packageStatus
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Install Node.js
+ipcMain.handle('node:install', async () => {
+    try {
+        const result = await installNode((progress) => {
+            nodeInstallProgress = progress;
+            if (mainWindow) {
+                mainWindow.webContents.send('node:installProgress', progress);
+            }
+        });
+        return {
+            success: result.success,
+            message: result.message
+        };
+    } catch (error) {
         return { success: false, error: error.message };
     }
 });

@@ -15,7 +15,8 @@ function Summary({
     totalLinesJest,
     totalStatementsJest,
     lineCoverage,
-    statementCoverage
+    statementCoverage,
+    executionTime
 }) {
     const formatNumber = (num) => {
         if (num === null || num === undefined) return '—';
@@ -36,6 +37,12 @@ function Summary({
 
     return (
         <section className="summary-section fade-in">
+            {executionTime && (
+                <div className="execution-time-banner">
+                    <span className="execution-time-icon">⏱️</span>
+                    <span>Analysis completed in <strong>{executionTime}s</strong></span>
+                </div>
+            )}
             <div className="summary-grid">
                 <div className="summary-card">
                     <div className="summary-value">{formatNumber(totalLinesJest)}</div>

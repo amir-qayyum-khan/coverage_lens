@@ -6,24 +6,28 @@ describe('Summary Component', () => {
     test('renders all summary cards', () => {
         render(
             <Summary
-                totalLines={1000}
-                totalStatements={500}
+                totalLinesJest={1000}
+                totalStatementsJest={500}
+                coveredLines={800}
+                coveredStatements={375}
                 lineCoverage={80}
                 statementCoverage={75}
             />
         );
 
-        expect(screen.getByText('Total Lines')).toBeInTheDocument();
-        expect(screen.getByText('Total Statements')).toBeInTheDocument();
-        expect(screen.getByText('Line Coverage')).toBeInTheDocument();
-        expect(screen.getByText('Statement Coverage')).toBeInTheDocument();
+        expect(screen.getByText('Total Testable Lines')).toBeInTheDocument();
+        expect(screen.getByText('Total Testable Statements')).toBeInTheDocument();
+        expect(screen.getByText(/Total Tested Lines \(80%\)/)).toBeInTheDocument();
+        expect(screen.getByText(/Total Tested Statements \(75%\)/)).toBeInTheDocument();
     });
 
     test('displays formatted numbers', () => {
         render(
             <Summary
-                totalLines={1234}
-                totalStatements={567}
+                totalLinesJest={1234}
+                totalStatementsJest={567}
+                coveredLines={1000}
+                coveredStatements={400}
                 lineCoverage={80}
                 statementCoverage={75}
             />
@@ -33,41 +37,52 @@ describe('Summary Component', () => {
         expect(screen.getByText('567')).toBeInTheDocument();
     });
 
-    test('displays percentages with % sign', () => {
+    test('displays percentages with % sign in labels', () => {
         render(
             <Summary
-                totalLines={100}
-                totalStatements={50}
+                totalLinesJest={100}
+                totalStatementsJest={50}
+                coveredLines={85}
+                coveredStatements={35}
                 lineCoverage={85}
                 statementCoverage={70}
             />
         );
 
-        expect(screen.getByText('85%')).toBeInTheDocument();
-        expect(screen.getByText('70%')).toBeInTheDocument();
+        expect(screen.getByText(/Total Tested Lines \(85%\)/)).toBeInTheDocument();
+        expect(screen.getByText(/Total Tested Statements \(70%\)/)).toBeInTheDocument();
     });
 
     test('displays dash for null coverage values', () => {
         render(
             <Summary
-                totalLines={100}
-                totalStatements={50}
+                totalLinesJest={null}
+                totalStatementsJest={null}
+                coveredLines={null}
+                coveredStatements={null}
                 lineCoverage={null}
                 statementCoverage={null}
             />
         );
 
+        // Should find dashes in the value fields
         const dashes = screen.getAllByText('—');
-        expect(dashes.length).toBe(2);
+        expect(dashes.length).toBe(4);
+
+        // Should also find dashes in the labels
+        expect(screen.getAllByText(/Total Tested Lines \(—\)/).length).toBe(1);
+        expect(screen.getAllByText(/Total Tested Statements \(—\)/).length).toBe(1);
     });
 
     test('applies success class for high coverage', () => {
         const { container } = render(
             <Summary
-                totalLines={100}
-                totalStatements={50}
+                totalLinesJest={100}
+                totalStatementsJest={50}
+                coveredLines={90}
+                coveredStatements={45}
                 lineCoverage={90}
-                statementCoverage={85}
+                statementCoverage={90}
             />
         );
 
@@ -78,10 +93,12 @@ describe('Summary Component', () => {
     test('applies warning class for medium coverage', () => {
         const { container } = render(
             <Summary
-                totalLines={100}
-                totalStatements={50}
+                totalLinesJest={100}
+                totalStatementsJest={50}
+                coveredLines={60}
+                coveredStatements={30}
                 lineCoverage={60}
-                statementCoverage={55}
+                statementCoverage={60}
             />
         );
 
@@ -92,10 +109,12 @@ describe('Summary Component', () => {
     test('applies error class for low coverage', () => {
         const { container } = render(
             <Summary
-                totalLines={100}
-                totalStatements={50}
+                totalLinesJest={100}
+                totalStatementsJest={50}
+                coveredLines={30}
+                coveredStatements={15}
                 lineCoverage={30}
-                statementCoverage={25}
+                statementCoverage={30}
             />
         );
 
@@ -106,14 +125,17 @@ describe('Summary Component', () => {
     test('handles zero values', () => {
         render(
             <Summary
-                totalLines={0}
-                totalStatements={0}
+                totalLinesJest={0}
+                totalStatementsJest={0}
+                coveredLines={0}
+                coveredStatements={0}
                 lineCoverage={0}
                 statementCoverage={0}
             />
         );
 
-        expect(screen.getAllByText('0').length).toBe(2);
-        expect(screen.getAllByText('0%').length).toBe(2);
+        expect(screen.getAllByText('0').length).toBe(4); // totalLinesJest, totalStatementsJest, coveredLines, coveredStatements
+        expect(screen.getAllByText(/0%/).length).toBe(2);
     });
 });
+

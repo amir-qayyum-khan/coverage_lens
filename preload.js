@@ -21,5 +21,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return () => {
             ipcRenderer.removeListener('menu:export-excel', subscription);
         };
+    },
+
+    // Node.js installation APIs
+    checkNode: () => ipcRenderer.invoke('node:check'),
+    checkPackages: (projectPath) => ipcRenderer.invoke('node:checkPackages', projectPath),
+    installNode: () => ipcRenderer.invoke('node:install'),
+    onNodeInstallProgress: (callback) => {
+        const subscription = (event, progress) => callback(progress);
+        ipcRenderer.on('node:installProgress', subscription);
+        return () => {
+            ipcRenderer.removeListener('node:installProgress', subscription);
+        };
     }
 });

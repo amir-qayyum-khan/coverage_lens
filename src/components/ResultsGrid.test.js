@@ -7,8 +7,12 @@ describe('ResultsGrid Component', () => {
         {
             relativePath: 'src/App.js',
             fileName: 'App.js',
-            codeLines: 100,
+            lines: 100,
             statements: 50,
+            totalLinesJest: 100,
+            totalStatementsJest: 50,
+            coveredLines: 85,
+            coveredStatements: 40,
             lineCoverage: 85,
             statementCoverage: 80,
             missingLines: [10, 15, 20]
@@ -16,8 +20,12 @@ describe('ResultsGrid Component', () => {
         {
             relativePath: 'src/utils/helper.js',
             fileName: 'helper.js',
-            codeLines: 50,
+            lines: 50,
             statements: 25,
+            totalLinesJest: 50,
+            totalStatementsJest: 25,
+            coveredLines: 30,
+            coveredStatements: 14,
             lineCoverage: 60,
             statementCoverage: 55,
             missingLines: [5, 6, 7, 8]
@@ -67,16 +75,21 @@ describe('ResultsGrid Component', () => {
     test('displays coverage percentages', () => {
         render(<ResultsGrid files={mockFiles} totalFiles={2} />);
 
-        expect(screen.getByText('85%')).toBeInTheDocument();
-        expect(screen.getByText('80%')).toBeInTheDocument();
+        // Component displays coverage as "covered / total (pct%)"
+        expect(screen.getByText(/85 \/ 100 \(85%\)/)).toBeInTheDocument();
+        expect(screen.getByText(/40 \/ 50 \(80%\)/)).toBeInTheDocument();
     });
 
     test('formats missing lines as ranges', () => {
         const filesWithRanges = [
             {
                 relativePath: 'test.js',
-                codeLines: 100,
+                lines: 100,
                 statements: 50,
+                totalLinesJest: 100,
+                totalStatementsJest: 50,
+                coveredLines: 50,
+                coveredStatements: 25,
                 lineCoverage: 50,
                 statementCoverage: 50,
                 missingLines: [1, 2, 3, 5, 10, 11, 12]
@@ -92,8 +105,12 @@ describe('ResultsGrid Component', () => {
         const filesWithNullCoverage = [
             {
                 relativePath: 'test.js',
-                codeLines: 100,
+                lines: 100,
                 statements: 50,
+                totalLinesJest: null,
+                totalStatementsJest: null,
+                coveredLines: null,
+                coveredStatements: null,
                 lineCoverage: null,
                 statementCoverage: null,
                 missingLines: []

@@ -13,6 +13,7 @@ function App() {
     const [loadingMessage, setLoadingMessage] = useState('');
     const [error, setError] = useState(null);
     const [coverageMessage, setCoverageMessage] = useState('');
+    const [executionTime, setExecutionTime] = useState(null);
 
 
     const handleFolderSelect = useCallback(async () => {
@@ -37,6 +38,8 @@ function App() {
         setError(null);
         setAnalysisResults(null);
         setCoverageResults(null);
+        setExecutionTime(null);
+        const startTime = Date.now();
 
         try {
             // Step 1: Analyze code
@@ -73,6 +76,8 @@ function App() {
         } catch (err) {
             setError(err.message);
         } finally {
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            setExecutionTime(elapsed);
             setIsLoading(false);
             setLoadingMessage('');
         }
@@ -210,7 +215,7 @@ function App() {
 
             {/* Summary Section */}
             {analysisResults && (
-                <Summary {...getSummary()} />
+                <Summary {...getSummary()} executionTime={executionTime} />
             )}
 
             {/* Results Grid */}

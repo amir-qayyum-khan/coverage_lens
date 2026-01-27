@@ -19,6 +19,42 @@ function findNearestPackageRoot(startPath) {
 }
 
 /**
+ * Get all source (non-test) JavaScript files in a folder recursively
+ * @param {string} folderPath - Path to search for files
+ * @returns {string[]} - Array of absolute file paths
+ */
+function getSourceFilesInFolder(folderPath) {
+    const files = [];
+
+    function walk(dir) {
+        try {
+            const items = fs.readdirSync(dir);
+            for (const item of items) {
+                const fullPath = path.join(dir, item);
+                const stat = fs.statSync(fullPath);
+
+                if (stat.isDirectory()) {
+                    // Skip common non-source directories
+                    if (!['node_modules', '__tests__', 'coverage', 'dist', 'build', 'i18n'].includes(item)) {
+                        walk(fullPath);
+                    }
+                } else if (stat.isFile() && item.endsWith('.js')) {
+                    // Skip test files
+                    if (!item.endsWith('.test.js') && !item.endsWith('.spec.js')) {
+                        files.push(fullPath);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn(`[CoverageRunner] Error reading directory ${dir}:`, err.message);
+        }
+    }
+
+    walk(folderPath);
+    return files;
+}
+
+/**
  * Run Jest with coverage on a folder
  * @param {string} folderPath - Path to the folder containing cases/files to analyze
  * @returns {Promise<object>} - Coverage results
@@ -47,9 +83,28 @@ async function runCoverage(folderPath) {
 
         console.log(`Running coverage from project root: ${projectRoot} for folder: ${folderPath}`);
 
+        // Check if node_modules exists
+        const nodeModulesPath = path.join(projectRoot, 'node_modules');
+        if (!fs.existsSync(nodeModulesPath)) {
+            console.warn('node_modules not found in:', projectRoot);
+            resolve({
+                success: true,
+                hasCoverage: false,
+                message: 'Dependencies not installed. Run "npm install" in the project folder first.',
+                files: [],
+                summary: {
+                    lines: { total: 0, covered: 0, pct: 0 },
+                    statements: { total: 0, covered: 0, pct: 0 },
+                    functions: { total: 0, covered: 0, pct: 0 },
+                    branches: { total: 0, covered: 0, pct: 0 }
+                }
+            });
+            return;
+        }
+
         // Check if jest is available
-        const nodeModulesPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
-        const jestPath = fs.existsSync(nodeModulesPath) ? nodeModulesPath : 'jest';
+        const jestBinPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
+        const jestPath = fs.existsSync(jestBinPath) || fs.existsSync(jestBinPath + '.cmd') ? jestBinPath : 'jest';
 
         // Coverage output directory (in the project root/coverage)
         const coverageDir = path.join(projectRoot, 'coverage_temp');
@@ -60,6 +115,10 @@ async function runCoverage(folderPath) {
         // Normalize slashes for Jest glob (must use forward slashes even on Windows)
         const posixPath = relativeFolderPath.split(path.sep).join('/');
         const globPattern = posixPath ? `${posixPath}/**/*.js` : '**/*.js';
+
+        // Get all source files in the folder for --findRelatedTests
+        const sourceFiles = getSourceFilesInFolder(folderPath);
+        console.log(`[CoverageRunner] Found ${sourceFiles.length} source files in folder`);
 
         // Run jest with coverage
         const jestArgs = [
@@ -76,10 +135,16 @@ async function runCoverage(folderPath) {
             '--silent'
         ];
 
+        // Add --findRelatedTests to only run tests related to our source files
+        // This dramatically speeds up execution by not running all project tests
+        if (sourceFiles.length > 0) {
+            jestArgs.push('--findRelatedTests', ...sourceFiles);
+        }
+
         console.log(`[CoverageRunner] Project Root: ${projectRoot}`);
         console.log(`[CoverageRunner] Folder Path: ${folderPath}`);
         console.log(`[CoverageRunner] Glob Pattern: ${globPattern}`);
-        console.log(`[CoverageRunner] Executing: ${jestPath} ${jestArgs.join(' ')}`);
+        console.log(`[CoverageRunner] Executing: ${jestPath} ${jestArgs.slice(0, 10).join(' ')}...`);
 
         const jest = spawn(jestPath, jestArgs, {
             cwd: projectRoot,
