@@ -40,7 +40,15 @@ function Summary({
             {executionTime && (
                 <div className="execution-time-banner">
                     <span className="execution-time-icon">⏱️</span>
-                    <span>Analysis completed in <strong>{executionTime}s</strong></span>
+                    <span>Analysis completed in <strong>{(() => {
+                        const totalSeconds = parseFloat(executionTime);
+                        const minutes = Math.floor(totalSeconds / 60);
+                        const seconds = Math.floor(totalSeconds % 60);
+                        if (minutes > 0) {
+                            return `${minutes}:${seconds.toString().padStart(2, '0')} min`;
+                        }
+                        return `${totalSeconds}s`;
+                    })()}</strong></span>
                 </div>
             )}
             <div className="summary-grid">
