@@ -3,9 +3,12 @@ import FolderBrowser from './components/FolderBrowser';
 import Summary from './components/Summary';
 import ResultsGrid from './components/ResultsGrid';
 import AnalysisLoader from './components/AnalysisLoader';
+import Dashboard from './components/Dashboard';
+import CoverageDetails from './components/CoverageDetails';
 import logo from './assets/logo.png';
 
 function App() {
+    const [view, setView] = useState('dashboard');
     const [folderPath, setFolderPath] = useState('');
     const [analysisResults, setAnalysisResults] = useState(null);
     const [coverageResults, setCoverageResults] = useState(null);
@@ -28,8 +31,9 @@ function App() {
         }
     }, []);
 
-    const handleAnalyze = useCallback(async () => {
-        if (!folderPath) {
+    const handleAnalyze = useCallback(async (pathOverride = null) => {
+        const targetPath = pathOverride || folderPath;
+        if (!targetPath) {
             setError('Please select a folder first');
             return;
         }
@@ -44,7 +48,7 @@ function App() {
         try {
             // Step 1: Analyze code
             setLoadingMessage('Analyzing code structure...');
-            const analysisResponse = await window.electronAPI.analyzeFolder(folderPath);
+            const analysisResponse = await window.electronAPI.analyzeFolder(targetPath);
 
             if (!analysisResponse.success) {
                 throw new Error(analysisResponse.error || 'Analysis failed');
@@ -54,7 +58,7 @@ function App() {
 
             // Step 2: Run coverage
             setLoadingMessage('Running tests and collecting coverage...');
-            const coverageResponse = await window.electronAPI.runCoverage(folderPath);
+            const coverageResponse = await window.electronAPI.runCoverage(targetPath);
 
             if (coverageResponse.success) {
                 setCoverageResults(coverageResponse.data);
@@ -82,6 +86,14 @@ function App() {
             setLoadingMessage('');
         }
     }, [folderPath]);
+
+    const handleProjectReady = useCallback((path) => {
+        setFolderPath(path);
+        setView('details');
+        // We need to trigger analysis. Since handleAnalyze depends on folderPath,
+        // we call it with the explicit path to avoid waiting for state update.
+        handleAnalyze(path);
+    }, [handleAnalyze]);
 
     // Merge analysis and coverage data for each file
     const getMergedResults = useCallback(() => {
@@ -177,54 +189,94 @@ function App() {
 
     return (
         <div className="app">
-
-            {/* Error Banner */}
-            {error && (
-                <div className="error-banner fade-in">
-                    <span className="error-icon">⚠️</span>
-                    <span>{error}</span>
+            <header className="main-header">
+                <div className="header-left">
+                    <img src={logo} alt="Voyagerr Lens" className="app-logo" />
+                    <h1 className="app-title">Voyagerr Lens</h1>
                 </div>
-            )}
+                <nav className="main-nav">
+                    <button
+                        className={`nav-item ${view === 'dashboard' ? 'active' : ''}`}
+                        onClick={() => setView('dashboard')}
+                    >
+                        Dashboard
+                    </button>
+                    <button
+                        className={`nav-item ${view === 'analysis' ? 'active' : ''}`}
+                        onClick={() => setView('analysis')}
+                    >
+                        Code Analysis
+                    </button>
+                    <button
+                        className={`nav-item ${view === 'details' ? 'active' : ''}`}
+                        onClick={() => setView('details')}
+                    >
+                        Details
+                    </button>
+                </nav>
+            </header>
 
-            {/* Coverage Warning */}
-            {coverageMessage && (
-                <div className="error-banner warning fade-in" style={{ backgroundColor: 'rgba(245, 158, 11, 0.1)', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#fbbf24' }}>
-                    <span className="error-icon">ℹ️</span>
-                    <span>{coverageMessage}</span>
-                </div>
-            )}
-
-            {/* Folder Browser */}
-            <FolderBrowser
-                folderPath={folderPath}
-                onFolderPathChange={setFolderPath}
-                onBrowse={handleFolderSelect}
-                onAnalyze={handleAnalyze}
-                isLoading={isLoading}
-            />
-
-            {/* Summary Section */}
-            {analysisResults && (
-                <Summary {...getSummary()} executionTime={executionTime} />
-            )}
-
-            {/* Results Grid */}
-            {analysisResults ? (
-                <ResultsGrid
-                    files={getMergedResults()}
-                    totalFiles={analysisResults.summary.totalFiles}
-                />
-            ) : (
-                <div className="empty-state fade-in">
-                    <div className="empty-state-logo-container">
-                        <img src={logo} alt="Voyagerr Logo" className="empty-state-logo" />
+            <main className="content">
+                {error && (
+                    <div className="error-banner fade-in">
+                        <span className="error-icon">⚠️</span>
+                        <span>{error}</span>
                     </div>
-                    <h2 className="empty-state-title">No folder selected</h2>
-                    <p className="empty-state-text">
-                        Select a folder to analyze its JavaScript files for code metrics and test coverage using Voyagerr Lens.
-                    </p>
-                </div>
-            )}
+                )}
+
+                {view === 'dashboard' ? (
+                    <Dashboard onProjectReady={handleProjectReady} />
+                ) : view === 'details' ? (
+                    <CoverageDetails
+                        coverageResults={coverageResults}
+                        analysisResults={analysisResults}
+                        folderPath={folderPath}
+                        executionTime={executionTime}
+                    />
+                ) : (
+                    <div className="analysis-view fade-in">
+                        {/* Coverage Warning */}
+                        {coverageMessage && (
+                            <div className="error-banner warning fade-in" style={{ backgroundColor: 'rgba(245, 158, 11, 0.1)', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#fbbf24' }}>
+                                <span className="error-icon">ℹ️</span>
+                                <span>{coverageMessage}</span>
+                            </div>
+                        )}
+
+                        {/* Folder Browser */}
+                        <FolderBrowser
+                            folderPath={folderPath}
+                            onFolderPathChange={setFolderPath}
+                            onBrowse={handleFolderSelect}
+                            onAnalyze={handleAnalyze}
+                            isLoading={isLoading}
+                        />
+
+                        {/* Summary Section */}
+                        {analysisResults && (
+                            <Summary {...getSummary()} executionTime={executionTime} />
+                        )}
+
+                        {/* Results Grid */}
+                        {analysisResults ? (
+                            <ResultsGrid
+                                files={getMergedResults()}
+                                totalFiles={analysisResults.summary.totalFiles}
+                            />
+                        ) : (
+                            <div className="empty-state fade-in">
+                                <div className="empty-state-logo-container">
+                                    <img src={logo} alt="Voyagerr Logo" className="empty-state-logo" />
+                                </div>
+                                <h2 className="empty-state-title">No folder selected</h2>
+                                <p className="empty-state-text">
+                                    Select a folder to analyze its JavaScript files for code metrics and test coverage using Voyagerr Lens.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </main>
 
             {/* Loading Overlay */}
             {isLoading && (

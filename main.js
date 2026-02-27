@@ -5,6 +5,8 @@ const XLSX = require('xlsx');
 const { analyzeFolder } = require('./src/services/codeAnalyzer');
 const { runCoverage } = require('./src/services/coverageRunner');
 const { checkNodeInstalled, checkPackagesInstalled, installNode, TARGET_NODE_VERSION } = require('./src/services/nodeInstaller');
+const { checkGitInstalled, installGit } = require('./src/services/gitChecker');
+const { cloneAndTest } = require('./src/services/gitOperations');
 
 let mainWindow;
 let nodeInstallProgress = null;
@@ -239,7 +241,6 @@ ipcMain.handle('node:checkPackages', async (event, projectPath) => {
 ipcMain.handle('node:install', async () => {
     try {
         const result = await installNode((progress) => {
-            nodeInstallProgress = progress;
             if (mainWindow) {
                 mainWindow.webContents.send('node:installProgress', progress);
             }
@@ -250,5 +251,58 @@ ipcMain.handle('node:install', async () => {
         };
     } catch (error) {
         return { success: false, error: error.message };
+    }
+});
+
+// Check if Git is installed
+ipcMain.handle('git:check', async () => {
+    try {
+        const gitStatus = checkGitInstalled();
+        return {
+            success: true,
+            data: gitStatus
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Install Git
+ipcMain.handle('git:install', async () => {
+    try {
+        const result = await installGit((progress) => {
+            if (mainWindow) {
+                mainWindow.webContents.send('git:installProgress', progress);
+            }
+        });
+        return {
+            success: result.success,
+            message: result.message
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Clone and Test an App
+ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentials }) => {
+    try {
+        const result = await cloneAndTest(
+            repoUrl,
+            targetDir,
+            (progress) => {
+                if (mainWindow) {
+                    mainWindow.webContents.send('app:progress', progress);
+                }
+            },
+            credentials
+        );
+        return {
+            success: result.success,
+            message: result.message,
+            data: result
+        };
+    } catch (error) {
+        return { success: false, message: error.message };
     }
 });

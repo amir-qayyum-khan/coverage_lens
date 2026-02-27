@@ -33,5 +33,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return () => {
             ipcRenderer.removeListener('node:installProgress', subscription);
         };
+    },
+
+    // Git APIs
+    checkGit: () => ipcRenderer.invoke('git:check'),
+    installGit: () => ipcRenderer.invoke('git:install'),
+    onGitInstallProgress: (callback) => {
+        const subscription = (event, progress) => callback(progress);
+        ipcRenderer.on('git:installProgress', subscription);
+        return () => {
+            ipcRenderer.removeListener('git:installProgress', subscription);
+        };
+    },
+
+    // App Operations APIs
+    cloneAndTest: (repoUrl, targetDir, credentials) => ipcRenderer.invoke('app:cloneAndTest', { repoUrl, targetDir, credentials }),
+    onAppProgress: (callback) => {
+        const subscription = (event, progress) => callback(progress);
+        ipcRenderer.on('app:progress', subscription);
+        return () => {
+            ipcRenderer.removeListener('app:progress', subscription);
+        };
     }
 });

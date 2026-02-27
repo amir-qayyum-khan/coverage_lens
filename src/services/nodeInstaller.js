@@ -231,10 +231,55 @@ async function installNode(onProgress) {
     }
 }
 
+/**
+ * Install npm packages in a directory
+ * @param {string} projectRoot - Path to the project root
+ * @param {function} onProgress - Progress callback
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+async function installPackages(projectRoot, onProgress) {
+    return new Promise((resolve) => {
+        if (onProgress) onProgress({ stage: 'installing_deps', message: 'Installing dependencies (this may take a while)...', percent: 75 });
+
+        const npm = spawn('npm', ['install', '--legacy-peer-deps'], {
+            cwd: projectRoot,
+            shell: true
+        });
+
+        let stderr = '';
+
+        npm.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+
+        npm.on('close', (code) => {
+            if (code === 0) {
+                resolve({
+                    success: true,
+                    message: 'Dependencies installed successfully.'
+                });
+            } else {
+                resolve({
+                    success: false,
+                    message: `npm install failed with code ${code}. ${stderr}`
+                });
+            }
+        });
+
+        npm.on('error', (err) => {
+            resolve({
+                success: false,
+                message: `Failed to run npm install: ${err.message}`
+            });
+        });
+    });
+}
+
 module.exports = {
     checkNodeInstalled,
     checkPackagesInstalled,
     installNode,
+    installPackages,
     getInstallerInfo,
     TARGET_NODE_VERSION
 };

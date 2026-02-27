@@ -11,11 +11,17 @@ const IGNORE_FILE_PATTERNS = [
     /\.scss$/,
     /\.less$/,
     /\.json$/,
-    /\.md$/
+    /\.md$/,
+    /setupTests\.js$/,
+    /webpack\.config\.js$/,
+    /babel\.config\.js$/,
+    /postBuild\.js$/,
+    /babelDev\.js$/,
+    /babelProd\.js$/
 ];
 
 // Folder names to ignore
-const IGNORE_FOLDER_NAMES = ['i18n', '__tests__', 'node_modules', '.git', 'dist', 'build'];
+const IGNORE_FOLDER_NAMES = ['i18n', '__tests__', 'node_modules', '.git', 'dist', 'build', '__mocks__', 'config', 'public', 'assets', 'coverage'];
 
 /**
  * Check if a file should be ignored based on patterns
@@ -241,7 +247,16 @@ function getJsFiles(folderPath, basePath = folderPath) {
  * @returns {object} - Analysis results with file details and summary
  */
 async function analyzeFolder(folderPath) {
-    const files = getJsFiles(folderPath);
+    let targetPath = folderPath;
+
+    // Auto-detect src folder for better defaults if analyzing project root
+    const srcPath = path.join(folderPath, 'src');
+    if (fs.existsSync(srcPath) && fs.statSync(srcPath).isDirectory()) {
+        console.log(`[CodeAnalyzer] src directory detected, analyzing: ${srcPath}`);
+        targetPath = srcPath;
+    }
+
+    const files = getJsFiles(targetPath);
     const results = [];
 
     let totalLines = 0;
@@ -251,7 +266,7 @@ async function analyzeFolder(folderPath) {
     for (const filePath of files) {
         const analysis = analyzeFile(filePath);
 
-        // Make path relative to the analyzed folder
+        // Make path relative to the root folderPath for consistency in UI
         analysis.relativePath = path.relative(folderPath, filePath);
 
         results.push(analysis);
