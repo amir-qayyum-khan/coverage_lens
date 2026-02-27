@@ -115,12 +115,43 @@ function getSourceFilesInFolder(folderPath) {
                     if (!ignoreFolders.includes(item)) {
                         walk(fullPath);
                     }
-                } else if (stat.isFile() && item.endsWith('.js')) {
+                } else if (stat.isFile() && (item.endsWith('.js') || item.endsWith('.jsx'))) {
                     // Skip test and config files - Sync with codeAnalyzer.js
                     const ignoreFiles = ['setupTests.js', 'webpack.config.js', 'babel.config.js', 'postBuild.js', 'babelDev.js', 'babelProd.js'];
-                    if (!item.endsWith('.test.js') && !item.endsWith('.spec.js') && !ignoreFiles.includes(item)) {
+                    if (!item.endsWith('.test.js') && !item.endsWith('.spec.js') && !item.endsWith('.test.jsx') && !item.endsWith('.spec.jsx') && !ignoreFiles.includes(item)) {
                         files.push(fullPath);
                     }
+                }
+            }
+        } catch (err) {
+            console.warn(`[CoverageRunner] Error reading directory ${dir}:`, err.message);
+        }
+    }
+
+    walk(folderPath);
+    return files;
+}
+
+/**
+ * Get all test files (*.test.js, *.spec.js, files in __tests__) in a folder recursively
+ * @param {string} folderPath - Path to search
+ * @returns {string[]} - Array of absolute test file paths
+ */
+function getTestFilesInFolder(folderPath) {
+    const files = [];
+
+    function walk(dir) {
+        try {
+            const items = fs.readdirSync(dir);
+            for (const item of items) {
+                const fullPath = path.join(dir, item);
+                const stat = fs.statSync(fullPath);
+
+                if (stat.isDirectory()) {
+                    if (item === 'node_modules' || item === '.git' || item === 'coverage' || item === 'dist' || item === 'build') continue;
+                    walk(fullPath);
+                } else if (stat.isFile() && (item.endsWith('.test.js') || item.endsWith('.spec.js') || item.endsWith('.test.jsx') || item.endsWith('.spec.jsx'))) {
+                    files.push(fullPath);
                 }
             }
         } catch (err) {
@@ -169,44 +200,74 @@ async function runCoverage(folderPath) {
 
         console.log(`Running coverage from project root: ${projectRoot} for folder: ${folderPath}`);
 
-        // Check if node_modules exists - warn but don't block (npx can handle it)
+        // Check if node_modules exists - if not, auto-install before running coverage
         const nodeModulesPath = path.join(projectRoot, 'node_modules');
         const hasNodeModules = fs.existsSync(nodeModulesPath);
         if (!hasNodeModules) {
-            console.warn('[CoverageRunner] node_modules not found, will use npx jest');
+            console.log(`[CoverageRunner] node_modules not found at ${nodeModulesPath}, running npm install --legacy-peer-deps...`);
+            const { spawnSync } = require('child_process');
+            const installResult = spawnSync('npm', ['install', '--legacy-peer-deps'], {
+                cwd: projectRoot,
+                shell: true,
+                stdio: 'inherit',
+                env: { ...process.env }
+            });
+            if (installResult.status !== 0) {
+                console.error(`[CoverageRunner] npm install failed with code ${installResult.status}`);
+                resolve({
+                    success: false,
+                    hasCoverage: false,
+                    error: 'npm install --legacy-peer-deps failed. Check the project for dependency issues.',
+                    files: [],
+                    summary: {
+                        lines: { total: 0, covered: 0, pct: 0 },
+                        statements: { total: 0, covered: 0, pct: 0 },
+                        functions: { total: 0, covered: 0, pct: 0 },
+                        branches: { total: 0, covered: 0, pct: 0 }
+                    }
+                });
+                return;
+            }
+            console.log(`[CoverageRunner] npm install completed successfully, proceeding with coverage...`);
         }
 
-        // Check if jest is available locally, otherwise use npx
+        // Use the local jest binary (node_modules guaranteed to exist at this point)
         const jestBinPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
-        const hasLocalJest = hasNodeModules && (fs.existsSync(jestBinPath) || fs.existsSync(jestBinPath + '.cmd'));
-        const useNpx = !hasLocalJest;
 
-        // Coverage output directory (in the project root/coverage)
+        // Coverage output directory (in the project root)
         const coverageDir = path.join(projectRoot, 'coverage_temp');
 
-        // Make folderPath relative to projectRoot for collectCoverageFrom
-        const relativeFolderPath = path.relative(projectRoot, folderPath);
-
-        // Normalize slashes for Jest glob (must use forward slashes even on Windows)
-        const posixPath = relativeFolderPath.split(path.sep).join('/');
-        const globPattern = posixPath ? `${posixPath}/**/*.js` : '**/*.js';
-
-        // Sync src redirection with codeAnalyzer.js
-        let targetAnalysisPath = folderPath;
-        const srcPath = path.join(folderPath, 'src');
-        if (fs.existsSync(srcPath) && fs.statSync(srcPath).isDirectory()) {
-            console.log(`[CoverageRunner] src directory detected, focusing analysis on: ${srcPath}`);
-            targetAnalysisPath = srcPath;
+        // Determine where the actual source lives.
+        // Priority: src/ inside projectRoot > src/ inside folderPath > projectRoot itself.
+        // This handles the common case where projectRoot is a subdirectory of folderPath
+        // (e.g. folderPath=TrapezeDRTCoreUI, projectRoot=TrapezeDRTCoreUI/source).
+        let targetAnalysisPath;
+        const srcInProjectRoot = path.join(projectRoot, 'src');
+        const srcInFolderPath = path.join(folderPath, 'src');
+        if (fs.existsSync(srcInProjectRoot) && fs.statSync(srcInProjectRoot).isDirectory()) {
+            console.log(`[CoverageRunner] src directory detected inside projectRoot, focusing analysis on: ${srcInProjectRoot}`);
+            targetAnalysisPath = srcInProjectRoot;
+        } else if (fs.existsSync(srcInFolderPath) && fs.statSync(srcInFolderPath).isDirectory()) {
+            console.log(`[CoverageRunner] src directory detected inside folderPath, focusing analysis on: ${srcInFolderPath}`);
+            targetAnalysisPath = srcInFolderPath;
+        } else {
+            targetAnalysisPath = projectRoot;
         }
 
-        // Get all source files in the folder for --findRelatedTests
+        // Build glob relative to projectRoot (Jest resolves collectCoverageFrom relative to rootDir/projectRoot).
+        // Using path.relative(projectRoot, targetAnalysisPath) avoids the broken `../**/*.js` pattern
+        // that occurs when folderPath is a parent of projectRoot.
+        const relativeToRoot = path.relative(projectRoot, targetAnalysisPath).split(path.sep).join('/');
+        const globPattern = relativeToRoot ? `${relativeToRoot}/**/*.{js,jsx}` : '**/*.{js,jsx}';
+
+        // Get all source files in targetAnalysisPath for --findRelatedTests
         const sourceFiles = getSourceFilesInFolder(targetAnalysisPath);
         console.log(`[CoverageRunner] Found ${sourceFiles.length} source files in ${targetAnalysisPath}`);
 
         // Create a temporary Jest config that overrides collectCoverageFrom
         // This is necessary because the project's jest.config.js settings override CLI arguments
         const tempConfigPath = path.join(projectRoot, 'jest.config.coverage-temp.js');
-        const projectConfigPath = findNearestJestConfig(folderPath) || path.join(projectRoot, 'jest.config.js');
+        const projectConfigPath = findNearestJestConfig(projectRoot) || path.join(projectRoot, 'jest.config.js');
 
         // Build config content that extends the existing config but overrides coverage settings
         // We use the absolute path for require to ensure it works regardless of where the config is
@@ -217,6 +278,8 @@ const baseConfig = fs.existsSync('${escapedProjectConfigPath}') ? require('${esc
 
 module.exports = {
     ...baseConfig,
+    bail: 0,
+    collectCoverage: true,
     collectCoverageFrom: [
         '${globPattern}',
         '!**/*.test.js',
@@ -234,7 +297,7 @@ module.exports = {
     ],
     coverageDirectory: '${coverageDir.replace(/\\/g, '/')}',
     coverageReporters: ['json-summary', 'json'],
-    // Disable coverage threshold for specific folder analysis
+    // Disable coverage threshold and bail so failing tests never block coverage output
     coverageThreshold: undefined
 };
 `;
@@ -242,31 +305,47 @@ module.exports = {
         console.log(`[CoverageRunner] Created temp config: ${tempConfigPath} using base: ${projectConfigPath}`);
 
         // Run jest with the temporary config
+        // For small projects: --findRelatedTests with source files (runs only relevant tests)
+        // For large projects: pass test files directly as positional args (avoids running all project tests)
+        // Windows cmd line limit ~8191 chars; 150 source files is a safe ceiling for --findRelatedTests
+        const MAX_RELATED_FILES = 150;
+        const isLargeProject = sourceFiles.length > MAX_RELATED_FILES;
+
+        // Workers: limit to 2 for large projects to avoid OOM when instrumenting many files
+        const maxWorkers = isLargeProject ? '--maxWorkers=2' : '--maxWorkers=50%';
+
         const jestArgs = [
             `--config=${tempConfigPath}`,
             '--coverage',
             '--passWithNoTests',
-            '--silent',
             '--forceExit',
-            '--detectOpenHandles',
-            '--maxWorkers=50%'
+            maxWorkers
         ];
 
-        // Add --findRelatedTests to only run tests related to our source files
-        // This dramatically speeds up execution by not running all project tests
-        if (sourceFiles.length > 0) {
+        if (!isLargeProject && sourceFiles.length > 0) {
+            // Small project: find related tests from source files
             jestArgs.push('--findRelatedTests', ...sourceFiles);
+            console.log(`[CoverageRunner] Small project: using --findRelatedTests with ${sourceFiles.length} source files`);
+        } else {
+            // Large project: just pass the target folder path to Jest.
+            // Jest will automatically find and run all tests within that folder.
+            // This avoids the "Command line is too long" error on Windows.
+            // Normalize path for Windows/Jest compatibility
+            const normalizedTargetDir = targetAnalysisPath.split(path.sep).join('/');
+            console.log(`[CoverageRunner] Large project: passing target folder directly to Jest: ${normalizedTargetDir}`);
+            jestArgs.push(normalizedTargetDir);
         }
 
         console.log(`[CoverageRunner] Project Root: ${projectRoot}`);
         console.log(`[CoverageRunner] Folder Path: ${folderPath}`);
         console.log(`[CoverageRunner] Glob Pattern: ${globPattern}`);
-        console.log(`[CoverageRunner] Executing: ${useNpx ? 'npx jest' : jestBinPath} ${jestArgs.slice(0, 6).join(' ')}...`);
+        console.log(`[CoverageRunner] Workers: ${maxWorkers}`);
+        console.log(`[CoverageRunner] Executing: ${jestBinPath} ${jestArgs.slice(0, 5).join(' ')}...`);
 
-        const command = useNpx ? 'npx' : jestBinPath;
-        const spawnArgs = useNpx ? ['--yes', 'jest', ...jestArgs] : jestArgs;
+        const command = jestBinPath;
+        const spawnArgs = jestArgs;
 
-        console.log(`[CoverageRunner] Using ${useNpx ? 'npx jest' : 'local jest binary'}`);
+        console.log(`[CoverageRunner] Using local jest binary`);
 
         const jest = spawn(command, spawnArgs, {
             cwd: projectRoot,
@@ -285,7 +364,9 @@ module.exports = {
             stderr += data.toString();
         });
 
-        jest.on('close', (code) => {
+        jest.on('close', (code, signal) => {
+            console.log(`[CoverageRunner] Jest exited with code=${code} signal=${signal}`);
+
             // Clean up temporary config file
             try {
                 if (fs.existsSync(tempConfigPath)) {
@@ -375,6 +456,10 @@ module.exports = {
                         message: files.length === 0 ? `No coverage match found for files in: ${folderPath}` : ''
                     });
                 } else {
+                    console.warn(`[CoverageRunner] No coverage-summary.json found at: ${coverageSummaryPath}`);
+                    console.warn(`[CoverageRunner] Jest exit code: ${code}`);
+                    if (stderr) console.warn(`[CoverageRunner] Jest stderr:\n${stderr.slice(0, 2000)}`);
+                    if (stdout) console.log(`[CoverageRunner] Jest stdout:\n${stdout.slice(0, 2000)}`);
                     resolve({
                         success: true,
                         hasCoverage: false,

@@ -118,9 +118,11 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
 
             {!hasCoverage ? (
                 <div className="coverage-no-data">
-                    <div className="coverage-no-data-icon">📊</div>
-                    <h3>No Coverage Data</h3>
-                    <p>Coverage could not be collected for this project. Make sure Jest is configured correctly.</p>
+                    <div className="coverage-no-data-icon">{coverageResults?.error ? '⚠️' : '📊'}</div>
+                    <h3>{coverageResults?.error ? 'Install Failed' : 'No Coverage Data'}</h3>
+                    <p>{coverageResults?.error
+                        || 'Coverage could not be collected for this project. Make sure Jest is configured correctly.'
+                    }</p>
                 </div>
             ) : (
                 <>
