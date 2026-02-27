@@ -231,8 +231,31 @@ async function runCoverage(folderPath) {
             console.log(`[CoverageRunner] npm install completed successfully, proceeding with coverage...`);
         }
 
-        // Use the local jest binary (node_modules guaranteed to exist at this point)
-        const jestBinPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
+        // Locate the local jest binary with multiple fallback options for Windows robustness
+        let jestBinPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
+        let useNodeToExecute = false;
+
+        if (process.platform === 'win32') {
+            const jestCmd = path.join(projectRoot, 'node_modules', '.bin', 'jest.cmd');
+            const jestJs = path.join(projectRoot, 'node_modules', 'jest', 'bin', 'jest.js');
+
+            if (fs.existsSync(jestCmd)) {
+                jestBinPath = jestCmd;
+            } else if (fs.existsSync(jestJs)) {
+                jestBinPath = jestJs;
+                useNodeToExecute = true;
+            } else if (!fs.existsSync(jestBinPath)) {
+                // If neither exists, we'll try 'npx jest' as a last resort
+                console.warn('[CoverageRunner] Local jest binary not found in expected locations, will try npx as fallback');
+                jestBinPath = 'npx';
+                useNodeToExecute = false;
+            }
+        }
+
+        // Normalize binary path for shell execution
+        if (jestBinPath !== 'npx') {
+            jestBinPath = jestBinPath.split(path.sep).join('/');
+        }
 
         // Coverage output directory (in the project root)
         const coverageDir = path.join(projectRoot, 'coverage_temp');
@@ -314,8 +337,9 @@ module.exports = {
         // Workers: limit to 2 for large projects to avoid OOM when instrumenting many files
         const maxWorkers = isLargeProject ? '--maxWorkers=2' : '--maxWorkers=50%';
 
+        const normalizedConfigPath = tempConfigPath.split(path.sep).join('/');
         const jestArgs = [
-            `--config=${tempConfigPath}`,
+            `--config=${normalizedConfigPath}`,
             '--coverage',
             '--passWithNoTests',
             '--forceExit',
@@ -324,7 +348,9 @@ module.exports = {
 
         if (!isLargeProject && sourceFiles.length > 0) {
             // Small project: find related tests from source files
-            jestArgs.push('--findRelatedTests', ...sourceFiles);
+            // Normalize all source file paths for Windows shell compatibility
+            const normalizedSourceFiles = sourceFiles.map(f => f.split(path.sep).join('/'));
+            jestArgs.push('--findRelatedTests', ...normalizedSourceFiles);
             console.log(`[CoverageRunner] Small project: using --findRelatedTests with ${sourceFiles.length} source files`);
         } else {
             // Large project: just pass the target folder path to Jest.
@@ -340,10 +366,19 @@ module.exports = {
         console.log(`[CoverageRunner] Folder Path: ${folderPath}`);
         console.log(`[CoverageRunner] Glob Pattern: ${globPattern}`);
         console.log(`[CoverageRunner] Workers: ${maxWorkers}`);
-        console.log(`[CoverageRunner] Executing: ${jestBinPath} ${jestArgs.slice(0, 5).join(' ')}...`);
+        if (useNodeToExecute) {
+            console.log(`[CoverageRunner] Using node to execute jest at: ${jestBinPath}`);
+        } else if (jestBinPath === 'npx') {
+            console.log(`[CoverageRunner] Using npx to execute jest`);
+        } else {
+            console.log(`[CoverageRunner] Using direct binary: ${jestBinPath}`);
+        }
 
-        const command = jestBinPath;
-        const spawnArgs = jestArgs;
+        const command = useNodeToExecute ? 'node' : jestBinPath;
+        const spawnArgs = useNodeToExecute ? [jestBinPath, ...jestArgs] :
+            (jestBinPath === 'npx' ? ['jest', ...jestArgs] : jestArgs);
+
+        console.log(`[CoverageRunner] Executing: ${command} ${spawnArgs.slice(0, 6).join(' ')}...`);
 
         console.log(`[CoverageRunner] Using local jest binary`);
 
