@@ -4,8 +4,10 @@ import Summary from './components/Summary';
 import ResultsGrid from './components/ResultsGrid';
 import AnalysisLoader from './components/AnalysisLoader';
 import Dashboard from './components/Dashboard';
+import SuperDashboard from './components/SuperDashboard';
 import CoverageDetails from './components/CoverageDetails';
 import logo from './assets/logo.png';
+import { getBasename } from './utils/pathUtils';
 
 function App() {
     const [view, setView] = useState('dashboard');
@@ -17,7 +19,7 @@ function App() {
     const [error, setError] = useState(null);
     const [coverageMessage, setCoverageMessage] = useState('');
     const [executionTime, setExecutionTime] = useState(null);
-
+    const [superProjectMetrics, setSuperProjectMetrics] = useState({});
 
     const handleFolderSelect = useCallback(async () => {
         try {
@@ -60,6 +62,12 @@ function App() {
             setLoadingMessage('Running tests and collecting coverage...');
             const coverageResponse = await window.electronAPI.runCoverage(targetPath);
 
+            const emptySummary = {
+                lines: { total: 0, covered: 0, pct: 0 },
+                statements: { total: 0, covered: 0, pct: 0 },
+                branches: { total: 0, covered: 0, pct: 0 }
+            };
+
             if (coverageResponse.success) {
                 setCoverageResults(coverageResponse.data);
                 setCoverageMessage(coverageResponse.data.message || '');
@@ -70,11 +78,24 @@ function App() {
                 setCoverageResults({
                     hasCoverage: false,
                     files: [],
-                    summary: {
-                        lines: { total: 0, covered: 0, pct: 0 },
-                        statements: { total: 0, covered: 0, pct: 0 }
-                    }
+                    summary: emptySummary
                 });
+            }
+
+            const folderKey = getBasename(targetPath);
+            if (folderKey) {
+                const summaryForSuper =
+                    coverageResponse.success && coverageResponse.data?.summary
+                        ? coverageResponse.data.summary
+                        : emptySummary;
+                setSuperProjectMetrics((prev) => ({
+                    ...prev,
+                    [folderKey]: {
+                        lines: summaryForSuper.lines,
+                        statements: summaryForSuper.statements,
+                        branches: summaryForSuper.branches
+                    }
+                }));
             }
 
         } catch (err) {
@@ -202,6 +223,12 @@ function App() {
                         Dashboard
                     </button>
                     <button
+                        className={`nav-item ${view === 'super' ? 'active' : ''}`}
+                        onClick={() => setView('super')}
+                    >
+                        Super Dashboard
+                    </button>
+                    <button
                         className={`nav-item ${view === 'analysis' ? 'active' : ''}`}
                         onClick={() => setView('analysis')}
                     >
@@ -226,6 +253,8 @@ function App() {
 
                 {view === 'dashboard' ? (
                     <Dashboard onProjectReady={handleProjectReady} />
+                ) : view === 'super' ? (
+                    <SuperDashboard projectMetrics={superProjectMetrics} />
                 ) : view === 'details' ? (
                     <CoverageDetails
                         coverageResults={coverageResults}
