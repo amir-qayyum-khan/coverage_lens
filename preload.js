@@ -47,7 +47,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
 
     // App Operations APIs
-    cloneAndTest: (repoUrl, targetDir, credentials) => ipcRenderer.invoke('app:cloneAndTest', { repoUrl, targetDir, credentials }),
+    cloneAndTest: (repoUrl, targetDir, credentials, branch) => ipcRenderer.invoke('app:cloneAndTest', { repoUrl, targetDir, credentials, branch }),
     onAppProgress: (callback) => {
         const subscription = (event, progress) => callback(progress);
         ipcRenderer.on('app:progress', subscription);

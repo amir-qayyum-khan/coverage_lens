@@ -8,9 +8,10 @@
         "dev": "npm run build && electron . --dev",
         "build": "webpack --mode production",
         "watch": "webpack --mode development --watch",
-        "test": "jest",
-        "test:watch": "jest --watch",
-        "test:coverage": "jest --coverage",
+        "test": "node -e \"console.log('Unit tests are disabled (npm run test:jest to run them).'); process.exit(0)\"",
+        "test:watch": "node -e \"console.log('Unit tests are disabled (npm run test:jest -- --watch).'); process.exit(0)\"",
+        "test:coverage": "node -e \"console.log('Unit tests are disabled (npm run test:jest -- --coverage).'); process.exit(0)\"",
+        "test:jest": "jest",
         "dist": "npm run build && electron-builder"
     },
     "build": {

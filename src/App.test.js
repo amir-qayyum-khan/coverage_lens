@@ -2,36 +2,64 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import App from './App';
 
-// Mock the electronAPI
+// Mock the electronAPI (Dashboard mounts first and registers progress listeners)
 const mockElectronAPI = {
     selectFolder: jest.fn(),
     analyzeFolder: jest.fn(),
     runCoverage: jest.fn(),
     getFolderInfo: jest.fn(),
-    onExportExcel: jest.fn(() => () => { }),
-    saveExcelFile: jest.fn()
+    onExportExcel: jest.fn(() => () => {}),
+    saveExcelFile: jest.fn(),
+    checkNode: jest.fn().mockResolvedValue({
+        success: true,
+        data: { loading: false, installed: true, version: '16.0.0' }
+    }),
+    checkGit: jest.fn().mockResolvedValue({
+        success: true,
+        data: { loading: false, installed: true, version: '2.40.0' }
+    }),
+    onNodeInstallProgress: jest.fn(() => () => {}),
+    onGitInstallProgress: jest.fn(() => () => {}),
+    onAppProgress: jest.fn(() => () => {}),
+    installNode: jest.fn(),
+    installGit: jest.fn(),
+    cloneAndTest: jest.fn()
 };
 
 beforeEach(() => {
     window.electronAPI = mockElectronAPI;
     jest.clearAllMocks();
+    mockElectronAPI.checkNode.mockResolvedValue({
+        success: true,
+        data: { loading: false, installed: true, version: '16.0.0' }
+    });
+    mockElectronAPI.checkGit.mockResolvedValue({
+        success: true,
+        data: { loading: false, installed: true, version: '2.40.0' }
+    });
 });
+
+function goToCodeAnalysis() {
+    fireEvent.click(screen.getByRole('button', { name: /code analysis/i }));
+}
 
 describe('App Component', () => {
     test('renders header with title', () => {
         render(<App />);
         expect(screen.getByText('Voyagerr Lens')).toBeInTheDocument();
-        expect(screen.getByText('Analyze code metrics and test coverage')).toBeInTheDocument();
+        expect(screen.getByText('Environment Dashboard')).toBeInTheDocument();
     });
 
     test('renders empty state initially', () => {
         render(<App />);
+        goToCodeAnalysis();
         expect(screen.getByText('No folder selected')).toBeInTheDocument();
         expect(screen.getByText(/Select a folder to analyze its JavaScript files for code metrics and test coverage using Voyagerr Lens\./i)).toBeInTheDocument();
     });
 
     test('renders folder browser with browse button', () => {
         render(<App />);
+        goToCodeAnalysis();
         expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /analyze/i })).toBeInTheDocument();
     });
@@ -40,6 +68,7 @@ describe('App Component', () => {
         mockElectronAPI.selectFolder.mockResolvedValue('/test/path');
 
         render(<App />);
+        goToCodeAnalysis();
 
         const browseButton = screen.getByRole('button', { name: /browse/i });
         fireEvent.click(browseButton);
@@ -51,6 +80,7 @@ describe('App Component', () => {
 
     test('analyze button is disabled when no folder selected', () => {
         render(<App />);
+        goToCodeAnalysis();
 
         const analyzeButton = screen.getByRole('button', { name: /analyze/i });
         expect(analyzeButton).toBeDisabled();
@@ -64,6 +94,7 @@ describe('App Component', () => {
         });
 
         render(<App />);
+        goToCodeAnalysis();
 
         // Select folder first
         const browseButton = screen.getByRole('button', { name: /browse/i });
@@ -120,6 +151,7 @@ describe('App Component', () => {
         });
 
         render(<App />);
+        goToCodeAnalysis();
 
         // Select folder and analyze
         fireEvent.click(screen.getByRole('button', { name: /browse/i }));

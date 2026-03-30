@@ -52,9 +52,10 @@ function runGitCommand(args, cwd, timeout = 120000) {
  * @param {string} targetDir - Directory to clone into
  * @param {function} onProgress - Progress callback ({stage, message, percent})
  * @param {object} [credentials] - Git credentials {username, token}
+ * @param {string} [branch] - Branch to checkout (defaults to master)
  * @returns {Promise<{success: boolean, message: string, branch: string|null, testResults: object|null}>}
  */
-async function cloneAndTest(repoUrl, targetDir, onProgress, credentials) {
+async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch) {
     const repoName = path.basename(repoUrl, '.git');
     const clonePath = path.join(targetDir, repoName);
 
@@ -117,38 +118,33 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials) {
         }
         sendProgress('fetching', 'Fetch complete', 40);
 
-        // Step 3: Try checkout developV2 first (high priority), then develop
-        sendProgress('checkout', 'Trying to checkout developV2...', 45);
-        let branch = 'developV2';
+        // Step 3: Try checkout the specified branch (default to master)
+        const targetBranch = branch || 'master';
+        sendProgress('checkout', `Trying to checkout ${targetBranch}...`, 45);
 
         // Try to checkout existing or track from origin
-        let checkoutResult = await runGitCommand(['checkout', 'developV2'], clonePath);
+        let checkoutResult = await runGitCommand(['checkout', targetBranch], clonePath);
 
         if (!checkoutResult.success) {
             // Try to create/track from remote if it exists but not locally
-            checkoutResult = await runGitCommand(['checkout', '-b', 'developV2', 'origin/developV2'], clonePath);
+            checkoutResult = await runGitCommand(['checkout', '-b', targetBranch, `origin/${targetBranch}`], clonePath);
 
             if (!checkoutResult.success) {
-                sendProgress('checkout', 'developV2 not found, trying develop...', 50);
-                branch = 'develop';
-                checkoutResult = await runGitCommand(['checkout', 'develop'], clonePath);
-
-                if (!checkoutResult.success) {
-                    checkoutResult = await runGitCommand(['checkout', '-b', 'develop', 'origin/develop'], clonePath);
-
-                    if (!checkoutResult.success) {
-                        return {
-                            success: false,
-                            message: `Neither developV2 nor develop branch found: ${checkoutResult.stderr}`,
-                            branch: null,
-                            testResults: null
-                        };
-                    }
-                }
+                // If the user specified a branch and it failed, we should probably stop here
+                // but if they didn't, we might want to try other defaults? 
+                // For now, let's just fail if the target branch (master or provided) doesn't exist.
+                return {
+                    success: false,
+                    message: `Branch ${targetBranch} not found: ${checkoutResult.stderr}`,
+                    branch: null,
+                    testResults: null
+                };
             }
         }
 
-        sendProgress('checkout', `Checked out ${branch}`, 55);
+        const activeBranch = targetBranch;
+
+        sendProgress('checkout', `Checked out ${activeBranch}`, 55);
 
         // Step 5: Install dependencies if node_modules missing or pull happened
         sendProgress('installing_deps', 'Checking dependencies...', 75);
@@ -163,12 +159,12 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials) {
         sendProgress('testing', 'Running unit tests...', 90);
         const testResults = await runTests(clonePath, sendProgress);
 
-        sendProgress('complete', `Done! Branch: ${branch}`, 100);
+        sendProgress('complete', `Done! Branch: ${activeBranch}`, 100);
 
         return {
             success: true,
-            message: `Successfully cloned, checked out ${branch}, and ran tests`,
-            branch,
+            message: `Successfully cloned, checked out ${activeBranch}, and ran tests`,
+            branch: activeBranch,
             testResults,
             clonePath
         };

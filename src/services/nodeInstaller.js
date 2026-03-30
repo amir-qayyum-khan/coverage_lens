@@ -239,7 +239,10 @@ async function installNode(onProgress) {
  */
 async function installPackages(projectRoot, onProgress) {
     return new Promise((resolve) => {
-        if (onProgress) onProgress({ stage: 'installing_deps', message: 'Installing dependencies (this may take a while)...', percent: 75 });
+        // gitOperations passes sendProgress(stage, message, percent) — not a single object
+        if (onProgress) {
+            onProgress('installing_deps', 'Installing dependencies (this may take a while)...', 75);
+        }
 
         const npm = spawn('npm', ['install', '--legacy-peer-deps'], {
             cwd: projectRoot,

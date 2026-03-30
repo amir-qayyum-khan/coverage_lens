@@ -28,6 +28,7 @@ function Dashboard({ onProjectReady }) {
     const [installingGit, setInstallingGit] = useState(false);
     const [installProgress, setInstallProgress] = useState(null);
     const [appStatuses, setAppStatuses] = useState({});
+    const [branchInputs, setBranchInputs] = useState({});
     const [error, setError] = useState(null);
 
     // Git Credentials State
@@ -134,7 +135,7 @@ function Dashboard({ onProjectReady }) {
                 [app.name]: { status: 'loading', stage: 'starting', message: 'Initiating...', percent: 0 }
             }));
 
-            const result = await window.electronAPI.cloneAndTest(app.url, baseDir, gitCredentials);
+            const result = await window.electronAPI.cloneAndTest(app.url, baseDir, gitCredentials, branchInputs[app.name]);
 
             setAppStatuses(prev => ({
                 ...prev,
@@ -192,7 +193,7 @@ function Dashboard({ onProjectReady }) {
                                     {status.status === 'loading' && (
                                         <div className="progress-container">
                                             <div className="progress-label">
-                                                <span>{status.stage}: {status.message}</span>
+                                                <span>{String(status.stage ?? '')}: {String(status.message ?? '')}</span>
                                                 <span>{status.percent}%</span>
                                             </div>
                                             <div className="progress-bar">
@@ -210,13 +211,13 @@ function Dashboard({ onProjectReady }) {
                                                     </span>
                                                 </div>
                                             )}
-                                            <div className="res-msg">{status.message}</div>
+                                            <div className="res-msg">{String(status.message ?? '')}</div>
                                         </div>
                                     )}
                                     {status.status === 'error' && (
                                         <div className="error-message-container">
                                             <div className="text-error">{status.message || 'An unknown error occurred'}</div>
-                                            {status.message && status.message.toLowerCase().includes('auth') && (
+                                            {String(status.message ?? '').toLowerCase().includes('auth') && (
                                                 <button
                                                     className="btn btn-secondary btn-xs"
                                                     style={{ marginTop: '5px' }}
@@ -230,11 +231,34 @@ function Dashboard({ onProjectReady }) {
                                 </div>
                             )}
 
-                            <div className="app-card-actions">
+                            <div className="app-card-actions" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                <div className="form-group" style={{ width: '100%' }}>
+                                    <input
+                                        type="text"
+                                        className="styled-input"
+                                        placeholder="Branch (default: master)"
+                                        value={branchInputs[app.name] || ''}
+                                        onChange={(e) => {
+                                            // Read value before setState: React 16 pools events; functional updaters run later when e.target is null
+                                            const value = e.target.value;
+                                            setBranchInputs((prev) => ({ ...prev, [app.name]: value }));
+                                        }}
+                                        style={{ 
+                                            width: '100%', 
+                                            padding: '6px 10px', 
+                                            fontSize: '12px',
+                                            background: 'rgba(255,255,255,0.05)',
+                                            border: '1px solid rgba(255,255,255,0.1)',
+                                            borderRadius: 'var(--radius-sm)',
+                                            color: 'white'
+                                        }}
+                                    />
+                                </div>
                                 <button
                                     className="btn btn-primary btn-sm"
                                     onClick={() => handleCloneAndTest(app)}
                                     disabled={status?.status === 'loading' || !nodeStatus.installed || !gitStatus.installed}
+                                    style={{ width: '100%' }}
                                 >
                                     {status?.status === 'loading' ? 'Processing...' : 'Clone & Test'}
                                 </button>

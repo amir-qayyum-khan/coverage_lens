@@ -285,7 +285,7 @@ ipcMain.handle('git:install', async () => {
 });
 
 // Clone and Test an App
-ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentials }) => {
+ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentials, branch }) => {
     try {
         const result = await cloneAndTest(
             repoUrl,
@@ -295,7 +295,8 @@ ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentia
                     mainWindow.webContents.send('app:progress', progress);
                 }
             },
-            credentials
+            credentials,
+            branch
         );
         return {
             success: result.success,
