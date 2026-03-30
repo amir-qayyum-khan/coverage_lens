@@ -46,8 +46,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
         };
     },
 
+    // Super Dashboard: read cached jest summaries from known clone roots
+    loadSuperDashboardCache: (clonePaths) =>
+        ipcRenderer.invoke('superDashboard:loadCached', { clonePaths }),
+    getSuperDashboardKnownClonePaths: () => ipcRenderer.invoke('superDashboard:getKnownClonePaths'),
+    setSuperDashboardKnownClonePaths: (paths) =>
+        ipcRenderer.invoke('superDashboard:setKnownClonePaths', { paths }),
+    rememberSuperDashboardClone: (clonePath) =>
+        ipcRenderer.invoke('superDashboard:rememberClone', { clonePath }),
+    browseSuperDashboardReposParent: () => ipcRenderer.invoke('superDashboard:browseReposParent'),
+
     // App Operations APIs
-    cloneAndTest: (repoUrl, targetDir, credentials, branch) => ipcRenderer.invoke('app:cloneAndTest', { repoUrl, targetDir, credentials, branch }),
+    cloneAndTest: (repoUrl, targetDir, credentials, branch, progressKey) =>
+        ipcRenderer.invoke('app:cloneAndTest', { repoUrl, targetDir, credentials, branch, progressKey }),
     onAppProgress: (callback) => {
         const subscription = (event, progress) => callback(progress);
         ipcRenderer.on('app:progress', subscription);

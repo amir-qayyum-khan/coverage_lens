@@ -1,6 +1,9 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { writeSuperDashboardJestSummary } = require('./superDashboardPersist');
+
+const JEST_CONFIG_FILENAMES = ['jest.config.js', 'jest.config.ts', 'jest.config.mjs', 'jest.config.cjs'];
 
 /**
  * Find the nearest package.json starting from the given path and moving up
@@ -25,10 +28,9 @@ function findNearestPackageRoot(startPath) {
  */
 function findNearestJestConfig(startPath) {
     let current = startPath;
-    const configNames = ['jest.config.js', 'jest.config.ts', 'jest.config.mjs', 'jest.config.cjs'];
 
     while (current !== path.parse(current).root) {
-        for (const name of configNames) {
+        for (const name of JEST_CONFIG_FILENAMES) {
             const fullPath = path.join(current, name);
             if (fs.existsSync(fullPath)) {
                 return fullPath;
@@ -46,7 +48,6 @@ function findNearestJestConfig(startPath) {
  * @returns {string|null} - Path to the directory containing both files, or null
  */
 function findTestRoot(startPath) {
-    const jestConfigNames = ['jest.config.js', 'jest.config.ts', 'jest.config.mjs', 'jest.config.cjs'];
     const skipDirs = ['node_modules', '.git', 'dist', 'build', 'coverage', 'coverage_temp'];
 
     /**
@@ -56,7 +57,7 @@ function findTestRoot(startPath) {
         const hasPackageJson = fs.existsSync(path.join(dirPath, 'package.json'));
         if (!hasPackageJson) return false;
 
-        return jestConfigNames.some(name => fs.existsSync(path.join(dirPath, name)));
+        return JEST_CONFIG_FILENAMES.some((name) => fs.existsSync(path.join(dirPath, name)));
     }
 
     // First check the startPath itself
@@ -87,6 +88,80 @@ function findTestRoot(startPath) {
             }
         } catch (err) {
             console.warn(`[CoverageRunner] Error searching directory ${dirPath}:`, err.message);
+        }
+        return null;
+    }
+
+    return searchDown(startPath);
+}
+
+function hasJestConfigFileInDir(dirPath) {
+    return JEST_CONFIG_FILENAMES.some((name) => fs.existsSync(path.join(dirPath, name)));
+}
+
+/**
+ * True when package.json lists Jest as a dependency or defines a "jest" config block (e.g. CRA).
+ * @param {string} dirPath
+ * @returns {boolean}
+ */
+function packageJsonDeclaresJest(dirPath) {
+    const pkgPath = path.join(dirPath, 'package.json');
+    if (!fs.existsSync(pkgPath)) return false;
+    try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg.jest != null && typeof pkg.jest === 'object') return true;
+        return !!(pkg.devDependencies?.jest || pkg.dependencies?.jest);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Directory that can run `jest` (package.json plus jest config file and/or Jest in package.json).
+ * @param {string} dirPath
+ * @returns {boolean}
+ */
+function isJestProjectDirectory(dirPath) {
+    if (!fs.existsSync(path.join(dirPath, 'package.json'))) return false;
+    return hasJestConfigFileInDir(dirPath) || packageJsonDeclaresJest(dirPath);
+}
+
+/**
+ * Like findTestRoot but also matches projects that only declare Jest in package.json (no jest.config.*).
+ * @param {string} startPath - Repository or folder root (e.g. clone path)
+ * @returns {string|null}
+ */
+function findJestProjectRoot(startPath) {
+    const strict = findTestRoot(startPath);
+    if (strict) return strict;
+
+    const skipDirs = ['node_modules', '.git', 'dist', 'build', 'coverage', 'coverage_temp'];
+
+    if (isJestProjectDirectory(startPath)) {
+        return startPath;
+    }
+
+    function searchDown(dirPath) {
+        try {
+            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+            const subDirs = [];
+
+            for (const entry of entries) {
+                if (!entry.isDirectory() || skipDirs.includes(entry.name)) continue;
+
+                const fullPath = path.join(dirPath, entry.name);
+                if (isJestProjectDirectory(fullPath)) {
+                    return fullPath;
+                }
+                subDirs.push(fullPath);
+            }
+
+            for (const subDir of subDirs) {
+                const found = searchDown(subDir);
+                if (found) return found;
+            }
+        } catch (err) {
+            console.warn(`[CoverageRunner] findJestProjectRoot search error ${dirPath}:`, err.message);
         }
         return null;
     }
@@ -420,6 +495,20 @@ module.exports = {
                     const fullSummary = JSON.parse(fs.readFileSync(coverageSummaryPath, 'utf8'));
                     const summary = fullSummary.total;
 
+                    // Persist Super Dashboard totals next to the analyzed folder (survives closing the app)
+                    if (summary && typeof summary === 'object') {
+                        writeSuperDashboardJestSummary(folderPath, null, projectRoot, {
+                            reportSource: 'code-analysis',
+                            totalTests: 0,
+                            passedTests: 0,
+                            failedTests: 0,
+                            testSuites: 0,
+                            success: code === 0,
+                            exitCode: typeof code === 'number' ? code : -1,
+                            coverage: { total: summary }
+                        });
+                    }
+
                     // Get realpath of folderPath for robust matching
                     let realFolderPath = folderPath;
                     try {
@@ -596,5 +685,8 @@ function formatMissingLines(lines) {
 module.exports = {
     runCoverage,
     formatMissingLines,
-    findTestRoot
+    findTestRoot,
+    findJestProjectRoot,
+    isJestProjectDirectory,
+    packageJsonDeclaresJest
 };

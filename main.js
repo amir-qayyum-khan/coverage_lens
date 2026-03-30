@@ -1,12 +1,29 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+
+// Stable userData dir across dev (electron .) and packaged builds so Super Dashboard known-clone paths persist.
+try {
+    const pkg = require(path.join(__dirname, 'package.json'));
+    if (pkg && typeof pkg.name === 'string' && pkg.name.trim()) {
+        app.setName(pkg.name.trim());
+    }
+} catch {
+    // ignore
+}
 const XLSX = require('xlsx');
 const { analyzeFolder } = require('./src/services/codeAnalyzer');
 const { runCoverage } = require('./src/services/coverageRunner');
 const { checkNodeInstalled, checkPackagesInstalled, installNode, TARGET_NODE_VERSION } = require('./src/services/nodeInstaller');
 const { checkGitInstalled, installGit } = require('./src/services/gitChecker');
 const { cloneAndTest } = require('./src/services/gitOperations');
+const { loadCachedSuperDashboardMetrics } = require('./src/services/superDashboardPersist');
+const {
+    readKnownClonePathsWithLegacyImport,
+    writeKnownClonePaths,
+    appendKnownClonePath
+} = require('./src/services/superDashboardKnownClones');
+const { listImmediateChildDirectories } = require('./src/services/superDashboardParentScan');
 
 let mainWindow;
 let nodeInstallProgress = null;
@@ -284,8 +301,64 @@ ipcMain.handle('git:install', async () => {
     }
 });
 
+// Known clone roots for Super Dashboard (disk in userData — shared across app instances; localStorage alone can be empty when multiple Electron processes use the same profile)
+ipcMain.handle('superDashboard:getKnownClonePaths', async () => {
+    try {
+        const paths = readKnownClonePathsWithLegacyImport(app.getPath('userData'));
+        return { success: true, paths };
+    } catch (error) {
+        return { success: false, error: error.message, paths: [] };
+    }
+});
+
+ipcMain.handle('superDashboard:setKnownClonePaths', async (event, { paths }) => {
+    try {
+        const merged = writeKnownClonePaths(app.getPath('userData'), paths || []);
+        return { success: true, paths: merged };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('superDashboard:rememberClone', async (event, { clonePath }) => {
+    try {
+        const paths = appendKnownClonePath(app.getPath('userData'), clonePath);
+        return { success: true, paths };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Load cached Super Dashboard metrics from .code-analyzer/super-dashboard-jest.json under each clone path
+ipcMain.handle('superDashboard:loadCached', async (event, { clonePaths }) => {
+    try {
+        const { metrics, skipped } = loadCachedSuperDashboardMetrics(clonePaths || []);
+        return { success: true, data: { metrics, skipped } };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Pick a parent folder whose immediate subfolders are treated as repo roots for Super Dashboard cache lookup
+ipcMain.handle('superDashboard:browseReposParent', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openDirectory'],
+        title: 'Select folder containing your cloned repositories'
+    });
+    if (result.canceled || !result.filePaths || !result.filePaths[0]) {
+        return { success: false, canceled: true };
+    }
+    const parentPath = result.filePaths[0];
+    try {
+        const childPaths = listImmediateChildDirectories(parentPath);
+        return { success: true, parentPath, childPaths };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 // Clone and Test an App
-ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentials, branch }) => {
+ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentials, branch, progressKey }) => {
     try {
         const result = await cloneAndTest(
             repoUrl,
@@ -296,7 +369,8 @@ ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentia
                 }
             },
             credentials,
-            branch
+            branch,
+            progressKey
         );
         return {
             success: result.success,

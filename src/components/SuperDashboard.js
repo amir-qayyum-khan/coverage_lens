@@ -4,8 +4,18 @@ import { YOU_APPS, WE_APPS, repoFolderKeyFromUrl } from '../data/appsCatalog';
 /**
  * @param {Object} props
  * @param {Record<string, { lines?: object, statements?: object, branches?: object }>} props.projectMetrics — keyed by clone folder name (repo basename)
+ * @param {string[]} [props.knownClonePaths] — repo roots used to load cached Jest summaries
+ * @param {() => void|Promise<void>} [props.onBrowseReposParent] — pick a folder whose subfolders are repo roots
+ * @param {() => void|Promise<void>} [props.onAddRepoFolder] — add one repo root
+ * @param {boolean} [props.busy]
  */
-function SuperDashboard({ projectMetrics = {} }) {
+function SuperDashboard({
+    projectMetrics = {},
+    knownClonePaths = [],
+    onBrowseReposParent,
+    onAddRepoFolder,
+    busy = false
+}) {
     const formatNumber = (num) => {
         if (num === null || num === undefined) return '—';
         return num.toLocaleString();
@@ -94,12 +104,51 @@ function SuperDashboard({ projectMetrics = {} }) {
         </div>
     );
 
+    const pathCount = Array.isArray(knownClonePaths) ? knownClonePaths.length : 0;
+
     return (
         <div className="dashboard fade-in super-dashboard">
             <header className="dashboard-header" style={{ marginBottom: '1rem' }}>
-                <h2 className="section-title" style={{ marginBottom: 0 }}>
-                    Super Dashboard
-                </h2>
+                <div
+                    style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'flex-start',
+                        justifyContent: 'space-between',
+                        gap: 'var(--spacing-md)'
+                    }}
+                >
+                    <h2 className="section-title" style={{ marginBottom: 0 }}>
+                        Super Dashboard
+                    </h2>
+                    <div className="super-dashboard-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {typeof onBrowseReposParent === 'function' && (
+                            <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={() => onBrowseReposParent()}
+                                disabled={busy}
+                                aria-busy={busy}
+                                aria-label="Browse for folder containing all cloned repositories"
+                            >
+                                <span className="btn-icon">📂</span>
+                                {busy ? 'Working…' : 'Set repos folder'}
+                            </button>
+                        )}
+                        {typeof onAddRepoFolder === 'function' && (
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={() => onAddRepoFolder()}
+                                disabled={busy}
+                                aria-label="Add one repository folder"
+                            >
+                                <span className="btn-icon">📁</span>
+                                Add repo folder
+                            </button>
+                        )}
+                    </div>
+                </div>
                 <p
                     className="settings-desc"
                     style={{
@@ -109,9 +158,26 @@ function SuperDashboard({ projectMetrics = {} }) {
                         maxWidth: '720px'
                     }}
                 >
-                    Coverage columns match Code Analysis file grid (line, statement, and branch totals from Jest).
-                    Rows fill after you analyze a folder whose name matches the cloned repository folder (e.g. TrapezeDRTCoreUI).
+                    Rows are matched to cached coverage by repository folder name (same as the clone directory name).
+                    Use <strong>Set repos folder</strong> to choose the directory that <em>contains</em> each cloned
+                    repo as a subfolder; the app registers every subfolder and reads{' '}
+                    <code>.code-analyzer/super-dashboard-jest.json</code> inside each one. Use{' '}
+                    <strong>Add repo folder</strong> if a repo lives elsewhere. Coverage is saved when tests run from
+                    Dashboard or Code Analysis.
                 </p>
+                {pathCount > 0 && (
+                    <p
+                        className="settings-desc"
+                        style={{
+                            fontSize: '11px',
+                            color: 'var(--text-secondary)',
+                            marginTop: '6px',
+                            maxWidth: '720px'
+                        }}
+                    >
+                        {pathCount} repo folder{pathCount === 1 ? '' : 's'} registered for cache lookup.
+                    </p>
+                )}
             </header>
             {renderTable('You Apps', YOU_APPS)}
             {renderTable('We Apps', WE_APPS)}

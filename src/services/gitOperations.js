@@ -1,6 +1,8 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { findJestProjectRoot } = require('./coverageRunner');
+const { writeSuperDashboardJestSummary } = require('./superDashboardPersist');
 
 /**
  * Run a git command and return its output
@@ -53,15 +55,18 @@ function runGitCommand(args, cwd, timeout = 120000) {
  * @param {function} onProgress - Progress callback ({stage, message, percent})
  * @param {object} [credentials] - Git credentials {username, token}
  * @param {string} [branch] - Branch to checkout (defaults to master)
+ * @param {string} [progressKey] - UI key for progress events (must match Dashboard card id, e.g. catalog app name)
  * @returns {Promise<{success: boolean, message: string, branch: string|null, testResults: object|null}>}
  */
-async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch) {
+async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch, progressKey) {
     const repoName = path.basename(repoUrl, '.git');
     const clonePath = path.join(targetDir, repoName);
+    // Dashboard keys status by app.name; URL basename (e.g. TrapezeDRTCoreUI) would never match "CoreUI".
+    const progressRepoName = progressKey || repoName;
 
     const sendProgress = (stage, message, percent) => {
         if (onProgress) {
-            onProgress({ stage, message, percent, repoName });
+            onProgress({ stage, message, percent, repoName: progressRepoName });
         }
     };
 
@@ -146,18 +151,35 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch)
 
         sendProgress('checkout', `Checked out ${activeBranch}`, 55);
 
-        // Step 5: Install dependencies if node_modules missing or pull happened
+        // Step 5: Install dependencies at clone root and/or nested Jest package (monorepos / inner package.json)
         sendProgress('installing_deps', 'Checking dependencies...', 75);
         const { installPackages } = require('./nodeInstaller');
-        const installResult = await installPackages(clonePath, sendProgress);
-        if (!installResult.success) {
-            sendProgress('installing_deps', `Install warning: ${installResult.message}`, 80);
+        const jestProjectRoot = findJestProjectRoot(clonePath);
+        const installDirs = new Set();
+        if (fs.existsSync(path.join(clonePath, 'package.json'))) {
+            installDirs.add(clonePath);
+        }
+        if (
+            jestProjectRoot &&
+            jestProjectRoot !== clonePath &&
+            fs.existsSync(path.join(jestProjectRoot, 'package.json'))
+        ) {
+            installDirs.add(jestProjectRoot);
+        }
+        if (installDirs.size === 0 && jestProjectRoot && fs.existsSync(path.join(jestProjectRoot, 'package.json'))) {
+            installDirs.add(jestProjectRoot);
+        }
+        for (const dir of installDirs) {
+            const installResult = await installPackages(dir, sendProgress);
+            if (!installResult.success) {
+                sendProgress('installing_deps', `Install warning (${path.basename(dir)}): ${installResult.message}`, 80);
+            }
         }
         sendProgress('installing_deps', 'Dependencies ready', 85);
 
-        // Step 6: Run unit tests using npx jest on src folder
+        // Step 6: Run Jest from discovered project root (package.json + jest config / Jest dependency)
         sendProgress('testing', 'Running unit tests...', 90);
-        const testResults = await runTests(clonePath, sendProgress);
+        const testResults = await runTests(clonePath, sendProgress, activeBranch);
 
         sendProgress('complete', `Done! Branch: ${activeBranch}`, 100);
 
@@ -179,66 +201,98 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch)
 }
 
 /**
- * Run unit tests on a cloned repo's src folder using npx jest
- * Same logic as coverageRunner.js
- * @param {string} projectRoot - Path to the project root
+ * Resolve how to invoke Jest for a package (local binary, node jest.js on Windows, or npx).
+ * @param {string} projectRoot - Directory containing node_modules (Jest package root)
+ * @returns {{ command: string, args: string[] }}
+ */
+function resolveJestSpawn(projectRoot) {
+    let jestBinPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
+    let useNodeToExecute = false;
+
+    if (process.platform === 'win32') {
+        const jestCmd = path.join(projectRoot, 'node_modules', '.bin', 'jest.cmd');
+        const jestJs = path.join(projectRoot, 'node_modules', 'jest', 'bin', 'jest.js');
+        if (fs.existsSync(jestCmd)) {
+            jestBinPath = jestCmd;
+        } else if (fs.existsSync(jestJs)) {
+            jestBinPath = jestJs;
+            useNodeToExecute = true;
+        } else if (!fs.existsSync(jestBinPath)) {
+            jestBinPath = 'npx';
+        }
+    } else if (!fs.existsSync(jestBinPath)) {
+        jestBinPath = 'npx';
+    }
+
+    if (jestBinPath !== 'npx') {
+        jestBinPath = jestBinPath.split(path.sep).join('/');
+    }
+
+    const jestArgs = [
+        '--coverage',
+        '--coverageReporters=json-summary',
+        '--coverageReporters=text',
+        '--passWithNoTests',
+        '--forceExit',
+        '--maxWorkers=50%'
+    ];
+
+    if (useNodeToExecute) {
+        return { command: 'node', args: [jestBinPath, ...jestArgs] };
+    }
+    if (jestBinPath === 'npx') {
+        return { command: 'npx', args: ['--yes', 'jest', ...jestArgs] };
+    }
+    return { command: jestBinPath, args: jestArgs };
+}
+
+/**
+ * Run unit tests via Jest from the discovered package root (nested monorepos supported).
+ * Coverage follows the project's jest.config.js; output goes to <jestRoot>/coverage/.
+ * @param {string} clonePath - Cloned repository root (for metadata file location)
  * @param {function} sendProgress - Progress callback
+ * @param {string} [branch] - Active branch label for the summary file
  * @returns {Promise<object>} - Test results summary
  */
-function runTests(projectRoot, sendProgress) {
+function runTests(clonePath, sendProgress, branch) {
     return new Promise((resolve) => {
-        const srcPath = path.join(projectRoot, 'src');
+        const jestRoot = findJestProjectRoot(clonePath);
 
-        // Check if src exists
-        if (!fs.existsSync(srcPath)) {
+        if (!jestRoot) {
             resolve({
                 success: false,
-                message: 'No src folder found',
+                message:
+                    'No Jest project found: need package.json with jest.config.* or Jest in dependencies under the clone.',
                 totalTests: 0,
                 passedTests: 0,
                 failedTests: 0,
-                testSuites: 0
+                testSuites: 0,
+                jestProjectRoot: null,
+                superDashboardSummaryPath: null
             });
             return;
         }
 
-        // Find test files in src
-        const testFiles = findTestFiles(srcPath);
-        if (testFiles.length === 0) {
-            resolve({
-                success: true,
-                message: 'No test files found in src/',
-                totalTests: 0,
-                passedTests: 0,
-                failedTests: 0,
-                testSuites: 0
-            });
-            return;
+        const testCandidates = findTestFiles(jestRoot);
+        const relRoot = path.relative(clonePath, jestRoot) || '.';
+        if (testCandidates.length === 0) {
+            sendProgress(
+                'testing',
+                `Jest root: ${relRoot} — no *.test/*.spec files found; running Jest with --passWithNoTests.`,
+                92
+            );
+        } else {
+            sendProgress(
+                'testing',
+                `Jest root: ${relRoot} — running ${testCandidates.length} test file(s)...`,
+                92
+            );
         }
 
-        sendProgress('testing', `Found ${testFiles.length} test file(s), running...`, 80);
+        const { command, args: spawnArgs } = resolveJestSpawn(jestRoot);
 
-        // Check if local jest exists
-        const jestBinPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
-        const hasLocalJest = fs.existsSync(jestBinPath) || fs.existsSync(jestBinPath + '.cmd');
-        const useNpx = !hasLocalJest;
-
-        const jestArgs = [
-            '--coverage',
-            '--collectCoverageFrom="src/**/*.js"',
-            '--coverageReporters=json-summary',
-            '--coverageReporters=text',
-            '--passWithNoTests',
-            '--forceExit',
-            '--detectOpenHandles',
-            '--maxWorkers=50%'
-        ];
-
-        const command = useNpx ? 'npx' : jestBinPath;
-        const spawnArgs = useNpx ? ['--yes', 'jest', ...jestArgs] : jestArgs;
-
-        const jest = spawn(command, spawnArgs, {
-            cwd: projectRoot,
+        const jestChild = spawn(command, spawnArgs, {
+            cwd: jestRoot,
             shell: true,
             env: { ...process.env, CI: 'true' }
         });
@@ -246,22 +300,21 @@ function runTests(projectRoot, sendProgress) {
         let stdout = '';
         let stderr = '';
 
-        jest.stdout.on('data', (data) => {
+        jestChild.stdout.on('data', (data) => {
             stdout += data.toString();
         });
 
-        jest.stderr.on('data', (data) => {
+        jestChild.stderr.on('data', (data) => {
             stderr += data.toString();
         });
 
-        jest.on('close', async (code) => {
-            // Parse Jest output for basic result
+        jestChild.on('close', (code) => {
             const results = parseJestOutput(stdout + '\n' + stderr);
             results.exitCode = code;
             results.success = code === 0;
+            results.jestProjectRoot = jestRoot;
 
-            // Try to read coverage summary for detailed stats
-            const coverageSummaryPath = path.join(projectRoot, 'coverage', 'coverage-summary.json');
+            const coverageSummaryPath = path.join(jestRoot, 'coverage', 'coverage-summary.json');
             try {
                 if (fs.existsSync(coverageSummaryPath)) {
                     const fullSummary = JSON.parse(fs.readFileSync(coverageSummaryPath, 'utf8'));
@@ -271,7 +324,7 @@ function runTests(projectRoot, sendProgress) {
                             .filter(([key]) => key !== 'total')
                             .map(([filePath, data]) => ({
                                 fileName: path.basename(filePath),
-                                relativePath: path.relative(projectRoot, filePath),
+                                relativePath: path.relative(jestRoot, filePath),
                                 lines: data.lines,
                                 branches: data.branches,
                                 statements: data.statements
@@ -282,18 +335,26 @@ function runTests(projectRoot, sendProgress) {
                 console.warn('Failed to parse coverage summary:', covErr.message);
             }
 
-            // DO NOT include rawOutput or any deep structures to avoid Electron bridge issues
+            results.superDashboardSummaryPath = writeSuperDashboardJestSummary(
+                clonePath,
+                branch,
+                jestRoot,
+                results
+            );
+
             resolve(results);
         });
 
-        jest.on('error', (err) => {
+        jestChild.on('error', (err) => {
             resolve({
                 success: false,
                 message: `Failed to run tests: ${err.message}`,
                 totalTests: 0,
                 passedTests: 0,
                 failedTests: 0,
-                testSuites: 0
+                testSuites: 0,
+                jestProjectRoot: jestRoot,
+                superDashboardSummaryPath: null
             });
         });
     });
@@ -319,7 +380,12 @@ function findTestFiles(dir) {
                         walk(fullPath);
                     }
                 } else if (stat.isFile()) {
-                    if (item.endsWith('.test.js') || item.endsWith('.spec.js')) {
+                    if (
+                        item.endsWith('.test.js') ||
+                        item.endsWith('.spec.js') ||
+                        item.endsWith('.test.jsx') ||
+                        item.endsWith('.spec.jsx')
+                    ) {
                         files.push(fullPath);
                     }
                 }
@@ -380,5 +446,6 @@ module.exports = {
     cloneAndTest,
     runTests,
     findTestFiles,
-    parseJestOutput
+    parseJestOutput,
+    resolveJestSpawn
 };

@@ -8,9 +8,14 @@ import SuperDashboard from './components/SuperDashboard';
 import CoverageDetails from './components/CoverageDetails';
 import logo from './assets/logo.png';
 import { getBasename } from './utils/pathUtils';
+import {
+    loadKnownClonePaths,
+    rememberClonePath,
+    syncKnownClonePathsToLocalStorage
+} from './utils/superDashboardClonePaths';
 
 function App() {
-    const [view, setView] = useState('dashboard');
+    const [view, setView] = useState('super');
     const [folderPath, setFolderPath] = useState('');
     const [analysisResults, setAnalysisResults] = useState(null);
     const [coverageResults, setCoverageResults] = useState(null);
@@ -20,6 +25,135 @@ function App() {
     const [coverageMessage, setCoverageMessage] = useState('');
     const [executionTime, setExecutionTime] = useState(null);
     const [superProjectMetrics, setSuperProjectMetrics] = useState({});
+    const [superKnownClonePaths, setSuperKnownClonePaths] = useState([]);
+    const [superDashBusy, setSuperDashBusy] = useState(false);
+
+    const refreshSuperDashboardFromPaths = useCallback(async (paths) => {
+        if (!paths || paths.length === 0) return;
+        const res = await window.electronAPI.loadSuperDashboardCache(paths);
+        if (res?.success && res.data?.metrics) {
+            setSuperProjectMetrics((prev) => ({ ...prev, ...res.data.metrics }));
+        }
+    }, []);
+
+    const persistAndReloadSuperPaths = useCallback(
+        async (nextPaths) => {
+            let merged = nextPaths;
+            if (window.electronAPI?.setSuperDashboardKnownClonePaths) {
+                const w = await window.electronAPI.setSuperDashboardKnownClonePaths(merged);
+                if (w?.success && Array.isArray(w.paths)) {
+                    merged = w.paths;
+                }
+            }
+            syncKnownClonePathsToLocalStorage(merged);
+            setSuperKnownClonePaths(merged);
+            await refreshSuperDashboardFromPaths(merged);
+        },
+        [refreshSuperDashboardFromPaths]
+    );
+
+    const handleBrowseSuperReposParent = useCallback(async () => {
+        setError(null);
+        const api = window.electronAPI?.browseSuperDashboardReposParent;
+        if (!api) {
+            setError('Super Dashboard folder browse is not available.');
+            return;
+        }
+        setSuperDashBusy(true);
+        try {
+            const res = await api();
+            if (!res || res.canceled) return;
+            if (!res.success) {
+                setError(res.error || 'Failed to read subfolders under the selected path.');
+                return;
+            }
+            const children = res.childPaths || [];
+            if (children.length === 0) {
+                setError(
+                    'No subfolders found. Choose the directory that contains your cloned repo folders (each repo as its own subfolder).'
+                );
+                return;
+            }
+            const diskRes = await window.electronAPI.getSuperDashboardKnownClonePaths();
+            const fromDisk =
+                diskRes?.success && Array.isArray(diskRes.paths) ? diskRes.paths : [];
+            const fromLocal = loadKnownClonePaths();
+            const merged = [...new Set([...fromDisk, ...fromLocal, ...children])];
+            await persistAndReloadSuperPaths(merged);
+        } catch (e) {
+            setError(e.message || String(e));
+        } finally {
+            setSuperDashBusy(false);
+        }
+    }, [persistAndReloadSuperPaths]);
+
+    const handleAddSingleSuperRepoFolder = useCallback(async () => {
+        setError(null);
+        setSuperDashBusy(true);
+        try {
+            const selected = await window.electronAPI.selectFolder();
+            if (!selected) return;
+            const diskRes = await window.electronAPI.getSuperDashboardKnownClonePaths();
+            const fromDisk =
+                diskRes?.success && Array.isArray(diskRes.paths) ? diskRes.paths : [];
+            const fromLocal = loadKnownClonePaths();
+            const merged = [...new Set([...fromDisk, ...fromLocal, selected.trim()])];
+            await persistAndReloadSuperPaths(merged);
+        } catch (e) {
+            setError(e.message || String(e));
+        } finally {
+            setSuperDashBusy(false);
+        }
+    }, [persistAndReloadSuperPaths]);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            let pathsFromFile = [];
+            try {
+                if (window.electronAPI?.getSuperDashboardKnownClonePaths) {
+                    const fileRes = await window.electronAPI.getSuperDashboardKnownClonePaths();
+                    if (!cancelled && fileRes?.success && Array.isArray(fileRes.paths)) {
+                        pathsFromFile = fileRes.paths;
+                    }
+                }
+            } catch (e) {
+                console.warn('Super Dashboard known paths (userData) read failed:', e.message);
+            }
+            const fromLocalStorage = loadKnownClonePaths();
+            let merged = [...new Set([...pathsFromFile, ...fromLocalStorage])];
+            if (merged.length > 0) {
+                syncKnownClonePathsToLocalStorage(merged);
+            }
+            const sameSet =
+                merged.length === pathsFromFile.length &&
+                merged.every((p) => pathsFromFile.includes(p));
+            if (!cancelled && !sameSet && merged.length > 0 && window.electronAPI?.setSuperDashboardKnownClonePaths) {
+                try {
+                    const wrote = await window.electronAPI.setSuperDashboardKnownClonePaths(merged);
+                    if (wrote?.success && Array.isArray(wrote.paths)) {
+                        merged = wrote.paths;
+                    }
+                } catch (e) {
+                    console.warn('Super Dashboard known paths (userData) merge write failed:', e.message);
+                }
+            }
+            if (!cancelled) {
+                setSuperKnownClonePaths(merged);
+            }
+            if (merged.length === 0) return;
+            try {
+                const res = await window.electronAPI.loadSuperDashboardCache(merged);
+                if (cancelled || !res?.success || !res.data?.metrics) return;
+                setSuperProjectMetrics((prev) => ({ ...prev, ...res.data.metrics }));
+            } catch (e) {
+                console.warn('Super Dashboard cache load failed:', e.message);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const handleFolderSelect = useCallback(async () => {
         try {
@@ -84,6 +218,7 @@ function App() {
 
             const folderKey = getBasename(targetPath);
             if (folderKey) {
+                rememberClonePath(targetPath);
                 const summaryForSuper =
                     coverageResponse.success && coverageResponse.data?.summary
                         ? coverageResponse.data.summary
@@ -108,9 +243,24 @@ function App() {
         }
     }, [folderPath]);
 
-    const handleProjectReady = useCallback((path) => {
+    const handleProjectReady = useCallback((path, cloneTestResults) => {
         setFolderPath(path);
         setView('details');
+
+        const folderKey = getBasename(path);
+        rememberClonePath(path);
+        const covTotal = cloneTestResults?.coverage?.total;
+        if (folderKey && covTotal) {
+            setSuperProjectMetrics((prev) => ({
+                ...prev,
+                [folderKey]: {
+                    lines: covTotal.lines,
+                    statements: covTotal.statements,
+                    branches: covTotal.branches
+                }
+            }));
+        }
+
         // We need to trigger analysis. Since handleAnalyze depends on folderPath,
         // we call it with the explicit path to avoid waiting for state update.
         handleAnalyze(path);
@@ -217,16 +367,16 @@ function App() {
                 </div>
                 <nav className="main-nav">
                     <button
-                        className={`nav-item ${view === 'dashboard' ? 'active' : ''}`}
-                        onClick={() => setView('dashboard')}
-                    >
-                        Dashboard
-                    </button>
-                    <button
                         className={`nav-item ${view === 'super' ? 'active' : ''}`}
                         onClick={() => setView('super')}
                     >
                         Super Dashboard
+                    </button>
+                    <button
+                        className={`nav-item ${view === 'dashboard' ? 'active' : ''}`}
+                        onClick={() => setView('dashboard')}
+                    >
+                        Dashboard
                     </button>
                     <button
                         className={`nav-item ${view === 'analysis' ? 'active' : ''}`}
@@ -251,10 +401,16 @@ function App() {
                     </div>
                 )}
 
-                {view === 'dashboard' ? (
+                {view === 'super' ? (
+                    <SuperDashboard
+                        projectMetrics={superProjectMetrics}
+                        knownClonePaths={superKnownClonePaths}
+                        onBrowseReposParent={handleBrowseSuperReposParent}
+                        onAddRepoFolder={handleAddSingleSuperRepoFolder}
+                        busy={superDashBusy}
+                    />
+                ) : view === 'dashboard' ? (
                     <Dashboard onProjectReady={handleProjectReady} />
-                ) : view === 'super' ? (
-                    <SuperDashboard projectMetrics={superProjectMetrics} />
                 ) : view === 'details' ? (
                     <CoverageDetails
                         coverageResults={coverageResults}

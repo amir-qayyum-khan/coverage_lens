@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { YOU_APPS, WE_APPS } from '../data/appsCatalog';
+import { rememberClonePath } from '../utils/superDashboardClonePaths';
 
 function Dashboard({ onProjectReady }) {
     const [nodeStatus, setNodeStatus] = useState({ loading: true, installed: false, version: null });
@@ -115,7 +116,13 @@ function Dashboard({ onProjectReady }) {
                 [app.name]: { status: 'loading', stage: 'starting', message: 'Initiating...', percent: 0 }
             }));
 
-            const result = await window.electronAPI.cloneAndTest(app.url, baseDir, gitCredentials, branchInputs[app.name]);
+            const result = await window.electronAPI.cloneAndTest(
+                app.url,
+                baseDir,
+                gitCredentials,
+                branchInputs[app.name],
+                app.name
+            );
 
             setAppStatuses(prev => ({
                 ...prev,
@@ -129,8 +136,11 @@ function Dashboard({ onProjectReady }) {
             }));
 
             // Automatically switch to analysis view if integration callback exists
+            if (result.success && result.data?.clonePath) {
+                rememberClonePath(result.data.clonePath);
+            }
             if (result.success && onProjectReady && result.data?.clonePath) {
-                onProjectReady(result.data.clonePath);
+                onProjectReady(result.data.clonePath, result.data.testResults);
             }
 
         } catch (err) {

@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import App from './App';
 
-// Mock the electronAPI (Dashboard mounts first and registers progress listeners)
+// Mock the electronAPI (Dashboard registers progress listeners when that view is opened)
 const mockElectronAPI = {
     selectFolder: jest.fn(),
     analyzeFolder: jest.fn(),
@@ -23,10 +23,18 @@ const mockElectronAPI = {
     onAppProgress: jest.fn(() => () => {}),
     installNode: jest.fn(),
     installGit: jest.fn(),
-    cloneAndTest: jest.fn()
+    cloneAndTest: jest.fn(),
+    loadSuperDashboardCache: jest.fn().mockResolvedValue({ success: true, data: { metrics: {}, skipped: [] } }),
+    getSuperDashboardKnownClonePaths: jest.fn().mockResolvedValue({ success: true, paths: [] }),
+    setSuperDashboardKnownClonePaths: jest.fn().mockImplementation((paths) =>
+        Promise.resolve({ success: true, paths: paths || [] })
+    ),
+    rememberSuperDashboardClone: jest.fn().mockResolvedValue({ success: true, paths: [] }),
+    browseSuperDashboardReposParent: jest.fn().mockResolvedValue({ success: false, canceled: true })
 };
 
 beforeEach(() => {
+    localStorage.clear();
     window.electronAPI = mockElectronAPI;
     jest.clearAllMocks();
     mockElectronAPI.checkNode.mockResolvedValue({
@@ -37,6 +45,15 @@ beforeEach(() => {
         success: true,
         data: { loading: false, installed: true, version: '2.40.0' }
     });
+    mockElectronAPI.setSuperDashboardKnownClonePaths.mockImplementation((paths) =>
+        Promise.resolve({ success: true, paths: paths || [] })
+    );
+    mockElectronAPI.loadSuperDashboardCache.mockResolvedValue({
+        success: true,
+        data: { metrics: {}, skipped: [] }
+    });
+    mockElectronAPI.getSuperDashboardKnownClonePaths.mockResolvedValue({ success: true, paths: [] });
+    mockElectronAPI.browseSuperDashboardReposParent.mockResolvedValue({ success: false, canceled: true });
 });
 
 function goToCodeAnalysis() {
@@ -44,10 +61,93 @@ function goToCodeAnalysis() {
 }
 
 describe('App Component', () => {
-    test('renders header with title', () => {
+    test('Set repos folder registers subfolders and reloads Super Dashboard cache', async () => {
+        mockElectronAPI.getSuperDashboardKnownClonePaths.mockResolvedValue({ success: true, paths: [] });
+        mockElectronAPI.setSuperDashboardKnownClonePaths.mockResolvedValue({
+            success: true,
+            paths: ['/data/repos/TrapezeDRTCoreUI']
+        });
+        mockElectronAPI.browseSuperDashboardReposParent.mockResolvedValue({
+            success: true,
+            parentPath: '/data/repos',
+            childPaths: ['/data/repos/TrapezeDRTCoreUI']
+        });
+        mockElectronAPI.loadSuperDashboardCache.mockResolvedValue({
+            success: true,
+            data: {
+                metrics: {
+                    TrapezeDRTCoreUI: {
+                        lines: { pct: 12, covered: 1, total: 8 },
+                        statements: { pct: 11, covered: 1, total: 8 },
+                        branches: { pct: 10, covered: 1, total: 8 }
+                    }
+                },
+                skipped: []
+            }
+        });
+
+        render(<App />);
+
+        fireEvent.click(
+            screen.getByRole('button', { name: /browse for folder containing all cloned repositories/i })
+        );
+
+        await waitFor(() => {
+            expect(mockElectronAPI.setSuperDashboardKnownClonePaths).toHaveBeenCalledWith([
+                '/data/repos/TrapezeDRTCoreUI'
+            ]);
+        });
+        await waitFor(() => {
+            expect(mockElectronAPI.loadSuperDashboardCache).toHaveBeenCalledWith([
+                '/data/repos/TrapezeDRTCoreUI'
+            ]);
+        });
+        await waitFor(() => {
+            expect(screen.getByText(/1.*8.*\(12%\)/)).toBeInTheDocument();
+        });
+    });
+
+    test('loads cached super dashboard metrics on mount when clone paths are stored', async () => {
+        localStorage.setItem(
+            'super_dashboard_known_clone_paths',
+            JSON.stringify(['/data/TrapezeDRTCoreUI'])
+        );
+        mockElectronAPI.loadSuperDashboardCache.mockResolvedValue({
+            success: true,
+            data: {
+                metrics: {
+                    TrapezeDRTCoreUI: {
+                        lines: { pct: 50, covered: 5, total: 10 },
+                        statements: { pct: 40, covered: 4, total: 10 },
+                        branches: { pct: 30, covered: 3, total: 10 }
+                    }
+                },
+                skipped: []
+            }
+        });
+
+        render(<App />);
+
+        await waitFor(() => {
+            expect(mockElectronAPI.setSuperDashboardKnownClonePaths).toHaveBeenCalledWith(['/data/TrapezeDRTCoreUI']);
+        });
+        await waitFor(() => {
+            expect(mockElectronAPI.loadSuperDashboardCache).toHaveBeenCalledWith(['/data/TrapezeDRTCoreUI']);
+        });
+        await waitFor(() => {
+            expect(screen.getByText(/5.*10.*\(50%\)/)).toBeInTheDocument();
+        });
+    });
+
+    test('renders header with title and Super Dashboard first', () => {
         render(<App />);
         expect(screen.getByText('Voyagerr Lens')).toBeInTheDocument();
-        expect(screen.getByText('Environment Dashboard')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Super Dashboard' })).toBeInTheDocument();
+        const nav = document.querySelector('.main-nav');
+        expect(nav).toBeTruthy();
+        const navButtons = [...nav.querySelectorAll('button')];
+        expect(navButtons[0].textContent).toMatch(/Super Dashboard/i);
+        expect(navButtons[1].textContent).toMatch(/^Dashboard$/i);
     });
 
     test('renders empty state initially', () => {
