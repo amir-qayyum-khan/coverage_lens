@@ -1,67 +1,207 @@
-import React from 'react';
-import { YOU_APPS, WE_APPS, repoFolderKeyFromUrl } from '../data/appsCatalog';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { YOU_APPS, WE_APPS } from '../data/appsCatalog';
 
 /**
- * @param {Object} props
- * @param {Record<string, { lines?: object, statements?: object, branches?: object }>} props.projectMetrics — keyed by clone folder name (repo basename)
- * @param {string[]} [props.knownClonePaths] — repo roots used to load cached Jest summaries
- * @param {() => void|Promise<void>} [props.onBrowseReposParent] — pick a folder whose subfolders are repo roots
- * @param {() => void|Promise<void>} [props.onAddRepoFolder] — add one repo root
- * @param {boolean} [props.busy]
+ * Super Dashboard — fetches coverage JSON from Gitea remote in parallel.
+ * Each row shows a skeleton loader until its data arrives.
+ * Tries branch: developV2 → develop.
  */
 function SuperDashboard({
-    projectMetrics = {},
     knownClonePaths = [],
     onBrowseReposParent,
     onAddRepoFolder,
     busy = false
 }) {
-    const formatNumber = (num) => {
-        if (num === null || num === undefined) return '—';
-        return num.toLocaleString();
+    // rowStatus: 'loading' | 'loaded' | 'no-data' | 'error'
+    const [rowStatus, setRowStatus] = useState({});
+    const [remoteMetrics, setRemoteMetrics] = useState({});
+    const [isFetching, setIsFetching] = useState(false);
+    const [lastFetchAt, setLastFetchAt] = useState(null);
+    const fetchIdRef = useRef(0);
+
+    // Inline credentials panel
+    const [showCredentials, setShowCredentials] = useState(false);
+    const [credentials, setCredentials] = useState(() => {
+        try {
+            const saved = localStorage.getItem('git_credentials');
+            return saved ? JSON.parse(saved) : { username: '', token: '' };
+        } catch { return { username: '', token: '' }; }
+    });
+    const [credSaved, setCredSaved] = useState(false);
+
+    const saveCredentials = () => {
+        localStorage.setItem('git_credentials', JSON.stringify(credentials));
+        setCredSaved(true);
+        setTimeout(() => setCredSaved(false), 2000);
+        setShowCredentials(false);
+        // Auto-refresh with new credentials
+        setTimeout(() => fetchAllCoverage(), 100);
     };
 
-    const formatPercentage = (pct) => {
-        if (pct === null || pct === undefined) return '—';
-        return `${pct}%`;
+    const getCredentials = () => {
+        try {
+            const saved = localStorage.getItem('git_credentials');
+            return saved ? JSON.parse(saved) : null;
+        } catch { return null; }
+    };
+
+    const fetchAllCoverage = useCallback(async () => {
+        const allApps = [...YOU_APPS, ...WE_APPS];
+        const id = ++fetchIdRef.current;
+
+        // Reset all rows to loading
+        const initialStatus = {};
+        allApps.forEach(app => { initialStatus[app.name] = 'loading'; });
+        setRowStatus(initialStatus);
+        setRemoteMetrics({});
+        setIsFetching(true);
+
+        const creds = getCredentials();
+
+        await Promise.allSettled(
+            allApps.map(async (app) => {
+                try {
+                    const result = await window.electronAPI.fetchRemoteCoverage(app.url, creds);
+                    if (id !== fetchIdRef.current) return; // stale
+
+                    if (result.success && result.data?.coverage) {
+                        const cov = result.data.coverage;
+                        setRemoteMetrics(prev => ({
+                            ...prev,
+                            [app.name]: {
+                                lines: cov.lines,
+                                statements: cov.statements,
+                                branches: cov.branches,
+                                branch: result.branch,
+                                generatedAt: result.data.generatedAt,
+                                tests: result.data.tests
+                            }
+                        }));
+                        setRowStatus(prev => ({ ...prev, [app.name]: 'loaded' }));
+                    } else {
+                        setRowStatus(prev => ({ ...prev, [app.name]: 'no-data' }));
+                    }
+                } catch {
+                    if (id !== fetchIdRef.current) return;
+                    setRowStatus(prev => ({ ...prev, [app.name]: 'error' }));
+                }
+            })
+        );
+
+        if (id === fetchIdRef.current) {
+            setIsFetching(false);
+            setLastFetchAt(new Date().toLocaleTimeString());
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchAllCoverage();
+    }, [fetchAllCoverage]);
+
+    const formatPct = (pct) => {
+        if (pct == null) return '—';
+        return `${Number(pct).toFixed(1)}%`;
+    };
+
+    const formatNum = (n) => {
+        if (n == null) return '—';
+        return Number(n).toLocaleString();
     };
 
     const getCoverageClass = (pct) => {
-        if (pct === null || pct === undefined) return '';
+        if (pct == null) return '';
         if (pct >= 80) return 'coverage-high';
         if (pct >= 50) return 'coverage-medium';
         return 'coverage-low';
     };
 
     const renderCoverageBar = (pct) => {
-        if (pct === null || pct === undefined) return null;
+        if (pct == null) return null;
         let barClass = 'low';
         if (pct >= 80) barClass = 'high';
         else if (pct >= 50) barClass = 'medium';
         return (
             <div className="coverage-bar">
-                <div
-                    className={`coverage-bar-fill ${barClass}`}
-                    style={{ width: `${Math.min(100, pct)}%` }}
-                />
+                <div className={`coverage-bar-fill ${barClass}`} style={{ width: `${Math.min(100, pct)}%` }} />
             </div>
         );
     };
 
-    const renderCoverageCell = (block) => {
+    const renderMetricCell = (block) => {
         if (!block || block.total == null) {
             return <td className="coverage-cell">—</td>;
         }
         const pct = block.pct;
-        const text =
-            pct !== null && pct !== undefined
-                ? `${formatNumber(block.covered)} / ${formatNumber(block.total)} (${formatPercentage(pct)})`
-                : '—';
         return (
             <td className={`coverage-cell ${getCoverageClass(pct)}`}>
-                {text}
+                <div style={{ fontWeight: 600 }}>{formatPct(pct)}</div>
+                <div style={{ fontSize: '11px', opacity: 0.7 }}>{formatNum(block.covered)} / {formatNum(block.total)}</div>
                 {renderCoverageBar(pct)}
             </td>
+        );
+    };
+
+    const renderSkeletonCell = () => (
+        <td className="coverage-cell">
+            <div className="skeleton-pulse" style={{ height: '16px', width: '70%', borderRadius: '4px', marginBottom: '4px' }} />
+            <div className="skeleton-pulse" style={{ height: '10px', width: '50%', borderRadius: '4px' }} />
+        </td>
+    );
+
+    const renderBranchTag = (branch) => {
+        if (!branch) return null;
+        const cls = branch === 'developV2' ? 'branch-tag-v2' : 'branch-tag-dev';
+        return <span className={`branch-tag ${cls}`}>{branch}</span>;
+    };
+
+    const renderRow = (app) => {
+        const status = rowStatus[app.name] || 'loading';
+        const m = remoteMetrics[app.name];
+
+        if (status === 'loading') {
+            return (
+                <tr key={app.name} className="skeleton-row">
+                    <td className="file-name">
+                        <span>{app.name}</span>
+                        <div className="skeleton-pulse" style={{ height: '10px', width: '60px', borderRadius: '3px', marginTop: '4px' }} />
+                    </td>
+                    {renderSkeletonCell()}
+                    {renderSkeletonCell()}
+                    {renderSkeletonCell()}
+                    <td><div className="skeleton-pulse" style={{ height: '20px', width: '80px', borderRadius: '10px' }} /></td>
+                </tr>
+            );
+        }
+
+        if (status === 'no-data' || status === 'error') {
+            return (
+                <tr key={app.name} className="no-data-row">
+                    <td className="file-name">{app.name}</td>
+                    <td className="coverage-cell" colSpan={3} style={{ color: 'var(--text-secondary)', fontSize: '12px', textAlign: 'center' }}>
+                        {status === 'error' ? '⚠ Fetch error' : '— No coverage data found'}
+                    </td>
+                    <td />
+                </tr>
+            );
+        }
+
+        return (
+            <tr key={app.name} className="fade-in">
+                <td className="file-name">
+                    <div>{app.name}</div>
+                    {m?.generatedAt && (
+                        <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                            {new Date(m.generatedAt).toLocaleDateString()}
+                        </div>
+                    )}
+                </td>
+                {renderMetricCell(m?.lines)}
+                {renderMetricCell(m?.statements)}
+                {renderMetricCell(m?.branches)}
+                <td style={{ textAlign: 'center' }}>
+                    {renderBranchTag(m?.branch)}
+                </td>
+            </tr>
         );
     };
 
@@ -73,30 +213,15 @@ function SuperDashboard({
                     <table className="results-table">
                         <thead>
                             <tr>
-                                <th>Project Name</th>
+                                <th>Project</th>
                                 <th>Line Coverage</th>
                                 <th>Stmt Coverage</th>
                                 <th>Branch Coverage</th>
+                                <th style={{ textAlign: 'center', width: 110 }}>Source Branch</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {apps.map((app) => {
-                                const key = repoFolderKeyFromUrl(app.url);
-                                const m = key ? projectMetrics[key] : null;
-                                const lines = m?.lines;
-                                const statements = m?.statements;
-                                const branches = m?.branches;
-                                return (
-                                    <tr key={app.name}>
-                                        <td className="file-name" title={key || app.url}>
-                                            {app.name}
-                                        </td>
-                                        {renderCoverageCell(lines)}
-                                        {renderCoverageCell(statements)}
-                                        {renderCoverageCell(branches)}
-                                    </tr>
-                                );
-                            })}
+                            {apps.map(renderRow)}
                         </tbody>
                     </table>
                 </div>
@@ -104,81 +229,128 @@ function SuperDashboard({
         </div>
     );
 
-    const pathCount = Array.isArray(knownClonePaths) ? knownClonePaths.length : 0;
+    const hasNoToken = !getCredentials()?.token;
+    const loadedCount = Object.values(rowStatus).filter(s => s === 'loaded').length;
+    const totalCount = YOU_APPS.length + WE_APPS.length;
 
     return (
         <div className="dashboard fade-in super-dashboard">
             <header className="dashboard-header" style={{ marginBottom: '1rem' }}>
-                <div
-                    style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        alignItems: 'flex-start',
-                        justifyContent: 'space-between',
-                        gap: 'var(--spacing-md)'
-                    }}
-                >
-                    <h2 className="section-title" style={{ marginBottom: 0 }}>
-                        Super Dashboard
-                    </h2>
-                    <div className="super-dashboard-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--spacing-md)' }}>
+                    <div>
+                        <h2 className="section-title" style={{ marginBottom: '4px' }}>Super Dashboard</h2>
+                        {lastFetchAt && (
+                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                Last refreshed: {lastFetchAt}
+                                {isFetching && <span style={{ marginLeft: '8px' }}>· Loading {loadedCount}/{totalCount}…</span>}
+                            </div>
+                        )}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                        <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setShowCredentials(v => !v)}
+                        >
+                            ⚙ Git Settings
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={fetchAllCoverage}
+                            disabled={isFetching}
+                        >
+                            {isFetching ? (
+                                <><span className="push-spinner">⟳</span> Fetching…</>
+                            ) : '↺ Refresh'}
+                        </button>
                         {typeof onBrowseReposParent === 'function' && (
-                            <button
-                                type="button"
-                                className="btn btn-primary"
-                                onClick={() => onBrowseReposParent()}
-                                disabled={busy}
-                                aria-busy={busy}
-                                aria-label="Browse for folder containing all cloned repositories"
-                            >
-                                <span className="btn-icon">📂</span>
-                                {busy ? 'Working…' : 'Set repos folder'}
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={onBrowseReposParent} disabled={busy}>
+                                📂 Local repos
                             </button>
                         )}
                         {typeof onAddRepoFolder === 'function' && (
-                            <button
-                                type="button"
-                                className="btn btn-secondary"
-                                onClick={() => onAddRepoFolder()}
-                                disabled={busy}
-                                aria-label="Add one repository folder"
-                            >
-                                <span className="btn-icon">📁</span>
-                                Add repo folder
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={onAddRepoFolder} disabled={busy}>
+                                📁 Add folder
                             </button>
                         )}
                     </div>
                 </div>
-                <p
-                    className="settings-desc"
-                    style={{
-                        fontSize: '12px',
-                        color: 'var(--text-secondary)',
-                        marginTop: 'var(--spacing-sm)',
-                        maxWidth: '720px'
-                    }}
-                >
-                    Rows are matched to cached coverage by repository folder name (same as the clone directory name).
-                    Use <strong>Set repos folder</strong> to choose the directory that <em>contains</em> each cloned
-                    repo as a subfolder; the app registers every subfolder and reads{' '}
-                    <code>.code-analyzer/super-dashboard-jest.json</code> inside each one. Use{' '}
-                    <strong>Add repo folder</strong> if a repo lives elsewhere. Coverage is saved when tests run from
-                    Dashboard or Code Analysis.
-                </p>
-                {pathCount > 0 && (
-                    <p
-                        className="settings-desc"
-                        style={{
-                            fontSize: '11px',
-                            color: 'var(--text-secondary)',
-                            marginTop: '6px',
-                            maxWidth: '720px'
-                        }}
-                    >
-                        {pathCount} repo folder{pathCount === 1 ? '' : 's'} registered for cache lookup.
-                    </p>
+
+                {/* Inline credentials panel */}
+                {showCredentials && (
+                    <div className="sd-cred-panel fade-in">
+                        <div className="sd-cred-header">
+                            <span className="sd-cred-title">🔑 Git Credentials</span>
+                            <button className="close-btn" onClick={() => setShowCredentials(false)}>×</button>
+                        </div>
+                        <p className="sd-cred-desc">
+                            Enter your Gitea username and Personal Access Token to fetch coverage from private repos.
+                            Don't have a token?{' '}
+                            <button
+                                className="sd-link-btn"
+                                onClick={() => window.electronAPI.openExternal('https://git.we-support.se/user/settings/applications')}
+                            >
+                                Create one in Gitea ↗
+                            </button>
+                        </p>
+                        <div className="sd-cred-form">
+                            <div className="sd-cred-field">
+                                <label className="sd-cred-label">Username (optional)</label>
+                                <input
+                                    type="text"
+                                    className="styled-input"
+                                    value={credentials.username}
+                                    onChange={e => setCredentials(c => ({ ...c, username: e.target.value }))}
+                                    placeholder="your-username"
+                                    autoComplete="username"
+                                />
+                            </div>
+                            <div className="sd-cred-field">
+                                <label className="sd-cred-label">Personal Access Token *</label>
+                                <input
+                                    type="password"
+                                    className="styled-input"
+                                    value={credentials.token}
+                                    onChange={e => setCredentials(c => ({ ...c, token: e.target.value }))}
+                                    placeholder="paste token here"
+                                    autoComplete="current-password"
+                                />
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <button
+                                    className="btn btn-primary btn-sm"
+                                    onClick={saveCredentials}
+                                    disabled={!credentials.token.trim()}
+                                >
+                                    Save &amp; Refresh
+                                </button>
+                                <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => setShowCredentials(false)}
+                                >
+                                    Cancel
+                                </button>
+                                {credSaved && (
+                                    <span style={{ fontSize: '12px', color: '#34d399' }}>✓ Saved!</span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 )}
+
+                {hasNoToken && (
+                    <div className="super-dash-notice">
+                        ⚠ No Git token configured — remote coverage cannot be fetched from private repos.
+                        Click <strong>⚙ Git Settings</strong> above to enter your Gitea Personal Access Token.
+                    </div>
+                )}
+                <p className="settings-desc" style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', maxWidth: '720px' }}>
+                    Coverage data is fetched directly from Gitea (<code>developV2</code> → <code>develop</code>).
+                    Results stream in as each project responds.
+                </p>
             </header>
+
             {renderTable('You Apps', YOU_APPS)}
             {renderTable('We Apps', WE_APPS)}
         </div>

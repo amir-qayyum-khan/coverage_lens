@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -16,7 +16,7 @@ const { analyzeFolder } = require('./src/services/codeAnalyzer');
 const { runCoverage } = require('./src/services/coverageRunner');
 const { checkNodeInstalled, checkPackagesInstalled, installNode, TARGET_NODE_VERSION } = require('./src/services/nodeInstaller');
 const { checkGitInstalled, installGit } = require('./src/services/gitChecker');
-const { cloneAndTest } = require('./src/services/gitOperations');
+const { cloneAndTest, pushCoverageReport } = require('./src/services/gitOperations');
 const { loadCachedSuperDashboardMetrics } = require('./src/services/superDashboardPersist');
 const {
     readKnownClonePathsWithLegacyImport,
@@ -379,5 +379,81 @@ ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentia
         };
     } catch (error) {
         return { success: false, message: error.message };
+    }
+});
+
+// Push coverage report file to Git (no force push; conflict-safe)
+ipcMain.handle('app:pushCoverageReport', async (event, { clonePath, branch, credentials }) => {
+    try {
+        const result = await pushCoverageReport(clonePath, branch, credentials);
+        return result;
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+});
+
+// Fetch the remote coverage JSON from Gitea (tries developV2, then develop)
+ipcMain.handle('app:fetchRemoteCoverage', async (event, { repoUrl, credentials }) => {
+    const https = require('https');
+    const http = require('http');
+    const FILE_PATH = '.code-analyzer/super-dashboard-jest.json';
+    const BRANCHES = ['developV2', 'develop'];
+
+    function buildRawUrl(url, branch) {
+        const base = url.replace(/\.git$/i, '').replace(/\/$/, '');
+        return `${base}/raw/branch/${encodeURIComponent(branch)}/${FILE_PATH}`;
+    }
+
+    function fetchRaw(rawUrl, creds) {
+        return new Promise((resolve) => {
+            let urlObj;
+            try { urlObj = new URL(rawUrl); } catch { resolve({ ok: false }); return; }
+            const options = {
+                hostname: urlObj.hostname,
+                port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+                path: urlObj.pathname + urlObj.search,
+                method: 'GET',
+                headers: {}
+            };
+            if (creds && creds.token) {
+                const b64 = Buffer.from(`${creds.username || ''}:${creds.token}`).toString('base64');
+                options.headers['Authorization'] = `Basic ${b64}`;
+            }
+            const protocol = urlObj.protocol === 'https:' ? https : http;
+            const req = protocol.request(options, (res) => {
+                let body = '';
+                res.on('data', (c) => { body += c; });
+                res.on('end', () => resolve({ ok: res.statusCode === 200, status: res.statusCode, body }));
+            });
+            req.on('error', () => resolve({ ok: false }));
+            req.setTimeout(15000, () => { req.destroy(); resolve({ ok: false }); });
+            req.end();
+        });
+    }
+
+    for (const branch of BRANCHES) {
+        const rawUrl = buildRawUrl(repoUrl, branch);
+        try {
+            const res = await fetchRaw(rawUrl, credentials);
+            if (res.ok) {
+                try {
+                    const data = JSON.parse(res.body);
+                    return { success: true, data, branch };
+                } catch {
+                    // malformed JSON — try next branch
+                }
+            }
+        } catch { /* try next branch */ }
+    }
+    return { success: false, message: 'Coverage not found on developV2 or develop' };
+});
+
+// Open a URL in the system browser (for Gitea auth / token creation)
+ipcMain.handle('app:openExternal', async (event, { url }) => {
+    try {
+        await shell.openExternal(url);
+        return { success: true };
+    } catch (e) {
+        return { success: false, message: e.message };
     }
 });

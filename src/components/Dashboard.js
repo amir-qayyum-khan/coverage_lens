@@ -10,6 +10,7 @@ function Dashboard({ onProjectReady }) {
     const [installProgress, setInstallProgress] = useState(null);
     const [appStatuses, setAppStatuses] = useState({});
     const [branchInputs, setBranchInputs] = useState({});
+    const [gitPushStatus, setGitPushStatus] = useState({}); // { [name]: { state:'idle'|'pushing'|'pushed'|'error', msg } }
     const [error, setError] = useState(null);
 
     // Git Credentials State
@@ -124,13 +125,15 @@ function Dashboard({ onProjectReady }) {
                 app.name
             );
 
+            // Single atomic update — clonePath must be here for the push to work
             setAppStatuses(prev => ({
                 ...prev,
                 [app.name]: {
                     status: result.success ? 'success' : 'error',
                     message: result.data?.message || result.message,
-                    branch: result.data?.branch,
-                    testResults: result.data?.testResults,
+                    branch: result.data?.branch || null,
+                    testResults: result.data?.testResults || null,
+                    clonePath: result.success ? (result.data?.clonePath || null) : null,
                     percent: 100
                 }
             }));
@@ -140,7 +143,7 @@ function Dashboard({ onProjectReady }) {
                 rememberClonePath(result.data.clonePath);
             }
             if (result.success && onProjectReady && result.data?.clonePath) {
-                onProjectReady(result.data.clonePath, result.data.testResults);
+                onProjectReady(result.data.clonePath, result.data.testResults, result.data.branch);
             }
 
         } catch (err) {
@@ -154,6 +157,40 @@ function Dashboard({ onProjectReady }) {
     const handleSaveCredentials = () => {
         localStorage.setItem('git_credentials', JSON.stringify(gitCredentials));
         setShowSettings(false);
+    };
+
+    const handlePushCoverage = async (app) => {
+        const status = appStatuses[app.name];
+        if (!status?.clonePath || !status?.branch) return;
+
+        // Require credentials
+        if (!gitCredentials.token) {
+            // Open Gitea token creation page in browser
+            window.electronAPI.openExternal('https://git.we-support.se/user/settings/applications');
+            setGitPushStatus(prev => ({
+                ...prev,
+                [app.name]: { state: 'error', msg: 'No token configured. Browser opened to create one — paste it in Git Settings above.' }
+            }));
+            return;
+        }
+
+        setGitPushStatus(prev => ({ ...prev, [app.name]: { state: 'pushing', msg: '' } }));
+        try {
+            const result = await window.electronAPI.pushCoverageReport(
+                status.clonePath,
+                status.branch,
+                gitCredentials
+            );
+            setGitPushStatus(prev => ({
+                ...prev,
+                [app.name]: { state: result.success ? 'pushed' : 'error', msg: result.message }
+            }));
+        } catch (err) {
+            setGitPushStatus(prev => ({
+                ...prev,
+                [app.name]: { state: 'error', msg: err.message }
+            }));
+        }
     };
 
     const renderStatusBadge = (status) => {
@@ -202,6 +239,18 @@ function Dashboard({ onProjectReady }) {
                                                 </div>
                                             )}
                                             <div className="res-msg">{String(status.message ?? '')}</div>
+
+                                            {/* Push status feedback */}
+                                            {gitPushStatus[app.name] && (
+                                                <div className="save-to-git-row">
+                                                    <div className={`push-status-badge push-status-${gitPushStatus[app.name].state}`}>
+                                                        {gitPushStatus[app.name].state === 'pushing' && <span className="push-spinner">⟳</span>}
+                                                        {gitPushStatus[app.name].state === 'pushing' && ' Pushing to Git…'}
+                                                        {gitPushStatus[app.name].state === 'pushed' && '✓ Coverage pushed to Git'}
+                                                        {gitPushStatus[app.name].state === 'error' && '✗ ' + gitPushStatus[app.name].msg}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                     {status.status === 'error' && (

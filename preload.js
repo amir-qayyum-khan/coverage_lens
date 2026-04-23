@@ -65,5 +65,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return () => {
             ipcRenderer.removeListener('app:progress', subscription);
         };
-    }
+    },
+
+    // Push coverage report to Git
+    pushCoverageReport: (clonePath, branch, credentials) =>
+        ipcRenderer.invoke('app:pushCoverageReport', { clonePath, branch, credentials }),
+
+    // Fetch remote coverage JSON from Gitea (tries developV2 then develop)
+    fetchRemoteCoverage: (repoUrl, credentials) =>
+        ipcRenderer.invoke('app:fetchRemoteCoverage', { repoUrl, credentials }),
+
+    // Open URL in system browser (Gitea auth / token page)
+    openExternal: (url) =>
+        ipcRenderer.invoke('app:openExternal', { url })
 });

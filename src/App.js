@@ -24,6 +24,7 @@ function App() {
     const [error, setError] = useState(null);
     const [coverageMessage, setCoverageMessage] = useState('');
     const [executionTime, setExecutionTime] = useState(null);
+    const [currentBranch, setCurrentBranch] = useState(null);
     const [superProjectMetrics, setSuperProjectMetrics] = useState({});
     const [superKnownClonePaths, setSuperKnownClonePaths] = useState([]);
     const [superDashBusy, setSuperDashBusy] = useState(false);
@@ -243,8 +244,9 @@ function App() {
         }
     }, [folderPath]);
 
-    const handleProjectReady = useCallback((path, cloneTestResults) => {
+    const handleProjectReady = useCallback((path, cloneTestResults, branch) => {
         setFolderPath(path);
+        setCurrentBranch(branch || null);
         setView('details');
 
         const folderKey = getBasename(path);
@@ -403,7 +405,6 @@ function App() {
 
                 {view === 'super' ? (
                     <SuperDashboard
-                        projectMetrics={superProjectMetrics}
                         knownClonePaths={superKnownClonePaths}
                         onBrowseReposParent={handleBrowseSuperReposParent}
                         onAddRepoFolder={handleAddSingleSuperRepoFolder}
@@ -417,6 +418,7 @@ function App() {
                         analysisResults={analysisResults}
                         folderPath={folderPath}
                         executionTime={executionTime}
+                        branch={currentBranch}
                     />
                 ) : (
                     <div className="analysis-view fade-in">

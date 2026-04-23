@@ -442,10 +442,174 @@ function parseJestOutput(output) {
     return results;
 }
 
+/**
+ * Build an authenticated Git remote URL by embedding credentials.
+ * @param {string} originUrl
+ * @param {{ username?: string, token?: string }|null} credentials
+ * @returns {string}
+ */
+function buildAuthUrl(originUrl, credentials) {
+    if (!credentials || !credentials.token) return originUrl;
+    try {
+        const u = new URL(originUrl);
+        u.username = credentials.username || '';
+        u.password = credentials.token;
+        return u.toString();
+    } catch {
+        return originUrl;
+    }
+}
+
+/**
+ * Push the coverage report file back to Git.
+ * Strategy:
+ *   1. git add <file>
+ *   2. git commit
+ *   3. git push  → if rejected due to conflict:
+ *      a. read our file content
+ *      b. git fetch + git reset --hard origin/<branch>
+ *      c. re-write file, add, commit, push again
+ * No force push is used unless the second attempt also fai/**
+ * @param {string} clonePath
+ * @param {string} branch
+ * @param {{ username?: string, token?: string }|null} credentials
+ * @returns {Promise<{ success: boolean, message: string }>}
+ */
+async function pushCoverageReport(clonePath, branch, credentials) {
+    const COVERAGE_FILE = '.code-analyzer/super-dashboard-jest.json'; // Always use forward slashes for Git
+    const COMMIT_MSG = 'chore: update coverage report [skip ci]';
+
+    console.log(`[GitPush] Starting push for ${path.basename(clonePath)} on branch ${branch}...`);
+
+    // Resolve origin URL (for auth injection)
+    const originResult = await runGitCommand(['remote', 'get-url', 'origin'], clonePath);
+    const originUrl = originResult.success ? originResult.stdout.trim() : null;
+    const authUrl = originUrl ? buildAuthUrl(originUrl, credentials) : null;
+    
+    console.log(`[GitPush] Origin URL: ${originUrl ? 'found' : 'missing'}`);
+
+    const stripCreds = (str) => {
+        let s = str || '';
+        if (credentials?.token) s = s.replace(new RegExp(credentials.token, 'g'), '****');
+        if (credentials?.username) s = s.replace(new RegExp(credentials.username, 'g'), '****');
+        return s;
+    };
+
+    // Ensure Git identity is set (otherwise commit fails on clean machines)
+    const emailCheck = await runGitCommand(['config', 'user.email'], clonePath);
+    if (!emailCheck.success || !emailCheck.stdout) {
+        console.log('[GitPush] Setting local git identity...');
+        await runGitCommand(['config', 'user.email', 'lens-auto-reporter@we-support.se'], clonePath);
+        await runGitCommand(['config', 'user.name', 'Voyagerr Lens Reporter'], clonePath);
+    }
+
+    // Stage the coverage file (use -f to bypass .gitignore if necessary)
+    console.log(`[GitPush] Staging file: ${COVERAGE_FILE}`);
+    const addResult = await runGitCommand(['add', '-f', COVERAGE_FILE], clonePath);
+    if (!addResult.success) {
+        console.error('[GitPush] Add failed:', stripCreds(addResult.stderr));
+        return { success: false, message: `git add failed: ${stripCreds(addResult.stderr)}` };
+    }
+
+    // Commit (--allow-empty in case file didn't change)
+    console.log('[GitPush] Committing changes...');
+    const commitResult = await runGitCommand(
+        ['commit', '-m', `"${COMMIT_MSG}"`, '--allow-empty'],
+        clonePath
+    );
+    if (!commitResult.success) {
+        console.error('[GitPush] Commit failed:', stripCreds(commitResult.stderr));
+        return { success: false, message: `git commit failed: ${stripCreds(commitResult.stderr)}` };
+    }
+
+    // First push attempt
+    console.log(`[GitPush] Pushing to ${authUrl ? 'authenticated remote' : 'origin'}...`);
+    const pushArgs = authUrl
+        ? ['push', authUrl, `${branch}:${branch}`]
+        : ['push', 'origin', `${branch}:${branch}`];
+
+    let pushResult = await runGitCommand(pushArgs, clonePath);
+
+    if (pushResult.success) {
+        console.log('[GitPush] Push successful.');
+        return { success: true, message: 'Coverage report pushed successfully.' };
+    }
+
+    const stderr = pushResult.stderr.toLowerCase();
+    const isConflict =
+        stderr.includes('rejected') ||
+        stderr.includes('non-fast-forward') ||
+        stderr.includes('[rejected]');
+
+    if (!isConflict) {
+        console.error('[GitPush] Push failed (not a conflict):', stripCreds(pushResult.stderr));
+        return { success: false, message: `Push failed: ${stripCreds(pushResult.stderr)}` };
+    }
+
+    // --- Conflict resolution ---
+    console.log('[GitPush] Conflict detected. Attempting resolution...');
+    const coverageFilePath = path.join(clonePath, '.code-analyzer', 'super-dashboard-jest.json');
+    let savedContent = null;
+    try {
+        savedContent = fs.readFileSync(coverageFilePath, 'utf8');
+    } catch {
+        console.error('[GitPush] Could not read coverage file for re-apply.');
+        return { success: false, message: 'Conflict detected but could not read coverage file to re-apply.' };
+    }
+
+    // 2. Undo our commit so we can sync with remote
+    console.log('[GitPush] Undoing local commit...');
+    await runGitCommand(['reset', '--hard', 'HEAD~1'], clonePath);
+
+    // 3. Fetch latest from remote
+    console.log('[GitPush] Fetching latest from remote...');
+    const fetchArgs = authUrl
+        ? ['fetch', authUrl, branch]
+        : ['fetch', 'origin', branch];
+    await runGitCommand(fetchArgs, clonePath);
+
+    // 4. Reset hard to remote HEAD
+    console.log(`[GitPush] Resetting hard to origin/${branch}...`);
+    const resetResult = await runGitCommand(['reset', '--hard', `origin/${branch}`], clonePath);
+    if (!resetResult.success) {
+        console.log('[GitPush] origin branch not found, trying FETCH_HEAD...');
+        await runGitCommand(['reset', '--hard', `FETCH_HEAD`], clonePath);
+    }
+
+    // 5. Re-write our coverage file
+    console.log('[GitPush] Re-writing coverage file...');
+    try {
+        const metaDir = path.dirname(coverageFilePath);
+        if (!fs.existsSync(metaDir)) fs.mkdirSync(metaDir, { recursive: true });
+        fs.writeFileSync(coverageFilePath, savedContent, 'utf8');
+    } catch (e) {
+        console.error('[GitPush] Re-write failed:', e.message);
+        return { success: false, message: `Failed to re-write coverage file after conflict: ${e.message}` };
+    }
+
+    // 6. Stage + commit + push again
+    console.log('[GitPush] Re-committing and retrying push...');
+    await runGitCommand(['add', '-f', COVERAGE_FILE], clonePath);
+    await runGitCommand(['commit', '-m', `"${COMMIT_MSG}"`, '--allow-empty'], clonePath);
+
+    const retryPushResult = await runGitCommand(pushArgs, clonePath);
+    if (retryPushResult.success) {
+        console.log('[GitPush] Push successful after resolution.');
+        return { success: true, message: 'Coverage report pushed (conflict resolved).' };
+    }
+
+    console.error('[GitPush] Retry push failed:', stripCreds(retryPushResult.stderr));
+    return {
+        success: false,
+        message: `Push failed after conflict resolution: ${stripCreds(retryPushResult.stderr)}`
+    };
+}
+
 module.exports = {
     cloneAndTest,
     runTests,
     findTestFiles,
     parseJestOutput,
-    resolveJestSpawn
+    resolveJestSpawn,
+    pushCoverageReport
 };

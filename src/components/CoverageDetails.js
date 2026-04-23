@@ -1,8 +1,20 @@
 import React, { useState, useMemo } from 'react';
 
-function CoverageDetails({ coverageResults, analysisResults, folderPath, executionTime }) {
+function CoverageDetails({ coverageResults, analysisResults, folderPath, executionTime, branch }) {
     const [sortKey, setSortKey] = useState('lineCoverage');
-    const [sortDir, setSortDir] = useState('asc');
+    const [sortDir, setSortDir] = useState('desc');
+    const [showConfirm, setShowConfirm] = useState(false);
+    const [pushStatus, setPushStatus] = useState({ state: 'idle', msg: '' }); // 'idle' | 'pushing' | 'pushed' | 'error'
+
+    // Get credentials from localStorage
+    const getGitCredentials = () => {
+        try {
+            const saved = localStorage.getItem('git_credentials');
+            return saved ? JSON.parse(saved) : { username: '', token: '' };
+        } catch {
+            return { username: '', token: '' };
+        }
+    };
 
     // Project name = last segment of folder path
     const projectName = useMemo(() => {
@@ -90,6 +102,34 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
 
     const hasCoverage = coverageResults?.hasCoverage !== false && coverageResults != null;
 
+    const handlePush = async () => {
+        setShowConfirm(false);
+        const creds = getGitCredentials();
+        
+        if (!creds.token) {
+            setPushStatus({ state: 'error', msg: 'No Git token configured. Set it in Dashboard settings.' });
+            return;
+        }
+
+        if (!branch) {
+            setPushStatus({ state: 'error', msg: 'No branch information available for this project.' });
+            return;
+        }
+
+        setPushStatus({ state: 'pushing', msg: 'Pushing coverage report to Git...' });
+        
+        try {
+            const result = await window.electronAPI.pushCoverageReport(folderPath, branch, creds);
+            if (result.success) {
+                setPushStatus({ state: 'pushed', msg: 'Coverage report successfully saved to Git.' });
+            } else {
+                setPushStatus({ state: 'error', msg: result.message || 'Push failed.' });
+            }
+        } catch (err) {
+            setPushStatus({ state: 'error', msg: err.message || 'An unexpected error occurred.' });
+        }
+    };
+
     return (
         <div className="coverage-details fade-in">
             {/* Project Info Header */}
@@ -99,22 +139,83 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
                     <div className="project-info-name">{projectName}</div>
                     <div className="project-info-path">{folderPath || '—'}</div>
                 </div>
-                {executionTime && (
-                    <div className="project-info-time">
-                        <span className="project-info-time-icon">⏱️</span>
-                        <span>
-                            {(() => {
-                                const totalSeconds = parseFloat(executionTime);
-                                const minutes = Math.floor(totalSeconds / 60);
-                                const seconds = Math.floor(totalSeconds % 60);
-                                return minutes > 0
-                                    ? `${minutes}:${seconds.toString().padStart(2, '0')} min`
-                                    : `${totalSeconds}s`;
-                            })()}
-                        </span>
-                    </div>
-                )}
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                    {branch && (
+                        <div className="branch-tag branch-tag-dev">
+                            branch: {branch}
+                        </div>
+                    )}
+                    
+                    {executionTime && (
+                        <div className="project-info-time">
+                            <span className="project-info-time-icon">⏱️</span>
+                            <span>
+                                {(() => {
+                                    const totalSeconds = parseFloat(executionTime);
+                                    const minutes = Math.floor(totalSeconds / 60);
+                                    const seconds = Math.floor(totalSeconds % 60);
+                                    return minutes > 0
+                                        ? `${minutes}:${seconds.toString().padStart(2, '0')} min`
+                                        : `${totalSeconds}s`;
+                                })()}
+                            </span>
+                        </div>
+                    )}
+
+                    <button 
+                        className="btn btn-primary" 
+                        onClick={() => setShowConfirm(true)}
+                        disabled={!hasCoverage || pushStatus.state === 'pushing'}
+                        style={{ height: 'fit-content', padding: '8px 16px' }}
+                    >
+                        Save to Git
+                    </button>
+                </div>
             </div>
+
+            {/* Push Status Banner */}
+            {pushStatus.state !== 'idle' && (
+                <div className={`push-status-banner push-status-${pushStatus.state} fade-in`} style={{ marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            {pushStatus.state === 'pushing' && <span className="push-spinner">⟳</span>}
+                            {pushStatus.state === 'pushed' && '✓'}
+                            {pushStatus.state === 'error' && '✗'}
+                            <span>{pushStatus.msg}</span>
+                        </div>
+                        <button 
+                            className="close-btn" 
+                            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '18px' }}
+                            onClick={() => setPushStatus({ state: 'idle', msg: '' })}
+                        >
+                            &times;
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Confirmation Popup Modal */}
+            {showConfirm && (
+                <div className="modal-overlay fade-in">
+                    <div className="modal-content">
+                        <div className="modal-header">
+                            <h3>Confirm Save</h3>
+                            <button className="close-btn" onClick={() => setShowConfirm(false)}>&times;</button>
+                        </div>
+                        <div className="modal-body">
+                            <p>We are going to save this coverage report on Git for the <strong>{branch}</strong> branch.</p>
+                            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '10px' }}>
+                                This will commit and push only the coverage summary JSON file.
+                            </p>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="btn btn-secondary" onClick={() => setShowConfirm(false)}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handlePush}>Confirm Save</button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {!hasCoverage ? (
                 <div className="coverage-no-data">
