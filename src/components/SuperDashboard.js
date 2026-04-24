@@ -249,13 +249,6 @@ function SuperDashboard({
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
                         <button
                             type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => setShowCredentials(v => !v)}
-                        >
-                            ⚙ Git Settings
-                        </button>
-                        <button
-                            type="button"
                             className="btn btn-primary btn-sm"
                             onClick={fetchAllCoverage}
                             disabled={isFetching}
@@ -264,16 +257,6 @@ function SuperDashboard({
                                 <><span className="push-spinner">⟳</span> Fetching…</>
                             ) : '↺ Refresh'}
                         </button>
-                        {typeof onBrowseReposParent === 'function' && (
-                            <button type="button" className="btn btn-secondary btn-sm" onClick={onBrowseReposParent} disabled={busy}>
-                                📂 Local repos
-                            </button>
-                        )}
-                        {typeof onAddRepoFolder === 'function' && (
-                            <button type="button" className="btn btn-secondary btn-sm" onClick={onAddRepoFolder} disabled={busy}>
-                                📁 Add folder
-                            </button>
-                        )}
                     </div>
                 </div>
 
@@ -342,7 +325,7 @@ function SuperDashboard({
                 {hasNoToken && (
                     <div className="super-dash-notice">
                         ⚠ No Git token configured — remote coverage cannot be fetched from private repos.
-                        Click <strong>⚙ Git Settings</strong> above to enter your Gitea Personal Access Token.
+                        Click <strong>⚙ Git Settings</strong> in the Environment Dashboard to enter your Gitea Personal Access Token.
                     </div>
                 )}
                 <p className="settings-desc" style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', maxWidth: '720px' }}>

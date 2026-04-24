@@ -15,7 +15,7 @@ import {
 } from './utils/superDashboardClonePaths';
 
 function App() {
-    const [view, setView] = useState('super');
+    const [view, setView] = useState('dashboard');
     const [folderPath, setFolderPath] = useState('');
     const [analysisResults, setAnalysisResults] = useState(null);
     const [coverageResults, setCoverageResults] = useState(null);
@@ -354,16 +354,16 @@ function App() {
                     </div>
                     <nav className="main-nav">
                         <button
-                            className={`nav-item ${view === 'super' ? 'active' : ''}`}
-                            onClick={() => setView('super')}
-                        >
-                            Super Dashboard
-                        </button>
-                        <button
                             className={`nav-item ${view === 'dashboard' ? 'active' : ''}`}
                             onClick={() => setView('dashboard')}
                         >
                             Dashboard
+                        </button>
+                        <button
+                            className={`nav-item ${view === 'super' ? 'active' : ''}`}
+                            onClick={() => setView('super')}
+                        >
+                            Super Dashboard
                         </button>
                         <button
                             className={`nav-item ${view === 'analysis' ? 'active' : ''}`}
