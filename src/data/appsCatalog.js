@@ -6,7 +6,8 @@ export const YOU_APPS = [
     { name: 'YouOperateUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouOperateUI.git' },
     { name: 'YouBookUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouBookUI.git' },
     { name: 'YouDriveUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouDriveUI.git' },
-    { name: 'YouDriveAdminUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouDriveAdminUI.git' }
+    { name: 'YouDriveAdminUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouDriveAdminUI.git' },
+    { name: 'YouCertUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouCertUI.git' }
 ];
 
 export const WE_APPS = [
@@ -17,7 +18,6 @@ export const WE_APPS = [
     { name: 'CommonUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTCommonUI.git' },
     { name: 'TravelmateWeUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTTravelmateWeUI.git' },
     { name: 'BatchSchedulingAgentUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTBatchSchedulingAgentUI.git' },
-    { name: 'YouCertUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouCertUI.git' },
     { name: 'FrameworkUI', url: 'https://git.we-support.se/Trapeze/TrapezeFrameworkUI.git' }
 ];
 

@@ -15,17 +15,24 @@ const IGNORE_FILE_PATTERNS = [
     /\.json$/,
     /\.md$/,
     /setupTests\.js$/,
-    /webpack\..*\.js$/,
-    /babel\.config\..*\.js$/,
+    /webpack\..*js$/,
+    /babel\.config\..*js$/,
     /\.babelrc$/,
-    /jest\.config\..*\.js$/,
+    /jest\.config\..*js$/,
+    /preStart\.js$/,
+    /babel\.prod\.js$/,
+    /babel\.dev\.js$/,
+    /\.eslintrc\..*$/,
+    /WeStore\.js$/,
+    /version\.js$/,
+    /store\.js$/,
     /postBuild\.js$/,
     /babelDev\.js$/,
     /babelProd\.js$/
 ];
 
 // Folder names to ignore
-const IGNORE_FOLDER_NAMES = ['i18n', '__tests__', 'node_modules', '.git', 'dist', 'build', '__mocks__', 'config', 'public', 'assets', 'coverage'];
+const IGNORE_FOLDER_NAMES = ['i18n', '__tests__', 'node_modules', '.git', 'dist', 'build', '__mocks__', 'config', 'public', 'assets', 'coverage', 'coverage-booking-folder', 'lcov-report'];
 
 /**
  * Check if a file should be ignored based on patterns

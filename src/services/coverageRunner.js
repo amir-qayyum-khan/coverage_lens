@@ -186,14 +186,14 @@ function getSourceFilesInFolder(folderPath) {
 
                 if (stat.isDirectory()) {
                     // Skip common non-source directories - Sync with codeAnalyzer.js
-                    const ignoreFolders = ['node_modules', '__tests__', 'coverage', 'dist', 'build', 'i18n', '.git', 'public', 'assets', '__mocks__', 'config'];
+                    const ignoreFolders = ['node_modules', '__tests__', 'coverage', 'dist', 'build', 'i18n', '.git', 'public', 'assets', '__mocks__', 'config', 'coverage-booking-folder', 'lcov-report'];
                     if (!ignoreFolders.includes(item)) {
                         walk(fullPath);
                     }
                 } else if (stat.isFile() && (item.endsWith('.js') || item.endsWith('.jsx'))) {
                     // Skip test and config files - Sync with codeAnalyzer.js
-                    const ignoreFiles = ['setupTests.js', 'postBuild.js', 'babelDev.js', 'babelProd.js'];
-                    const isConfig = item.startsWith('webpack.') || item.startsWith('babel.config.') || item.startsWith('jest.config.') || item === '.babelrc';
+                    const ignoreFiles = ['setupTests.js', 'postBuild.js', 'babelDev.js', 'babelProd.js', 'preStart.js', 'babel.prod.js', 'babel.dev.js', 'WeStore.js', 'version.js', 'store.js'];
+                    const isConfig = item.startsWith('webpack.') || item.startsWith('babel.config.') || item.startsWith('jest.config.') || item === '.babelrc' || item.startsWith('.eslintrc');
                     if (!item.endsWith('.test.js') && !item.endsWith('.spec.js') && !item.endsWith('.test.jsx') && !item.endsWith('.spec.jsx') && !ignoreFiles.includes(item) && !isConfig) {
                         files.push(fullPath);
                     }
@@ -224,7 +224,7 @@ function getTestFilesInFolder(folderPath) {
                 const stat = fs.statSync(fullPath);
 
                 if (stat.isDirectory()) {
-                    if (item === 'node_modules' || item === '.git' || item === 'coverage' || item === 'dist' || item === 'build') continue;
+                    if (['node_modules', '.git', 'coverage', 'dist', 'build', 'coverage-booking-folder', 'lcov-report'].includes(item)) continue;
                     walk(fullPath);
                 } else if (stat.isFile() && (item.endsWith('.test.js') || item.endsWith('.spec.js') || item.endsWith('.test.jsx') || item.endsWith('.spec.jsx'))) {
                     files.push(fullPath);
@@ -388,11 +388,19 @@ module.exports = {
             '!**/__tests__/**',
             '!**/__mocks__/**',
             '!**/i18n/**',
-            '!**/config/**',
-            '!**/webpack.*.js',
-            '!**/babel.config.*.js',
+            '!**/webpack*.js',
+            '!**/babel.config*.js',
             '!**/.babelrc',
-            '!**/jest.config.*.js',
+            '!**/jest.config*.js',
+            '!**/preStart.js',
+            '!**/babel.prod.js',
+            '!**/babel.dev.js',
+            '!**/.eslintrc*',
+            '!**/WeStore.js',
+            '!**/version.js',
+            '!**/store.js',
+            '!**/coverage-booking-folder/**',
+            '!**/lcov-report/**',
             '!**/*.css',
             '!**/*.scss',
             '!**/*.less',
