@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { YOU_APPS, WE_APPS } from '../data/appsCatalog';
 import { rememberClonePath } from '../utils/superDashboardClonePaths';
 
-function Dashboard({ onProjectReady }) {
+function Dashboard() {
     const [nodeStatus, setNodeStatus] = useState({ loading: true, installed: false, version: null });
     const [gitStatus, setGitStatus] = useState({ loading: true, installed: false, version: null });
     const [installingNode, setInstallingNode] = useState(false);

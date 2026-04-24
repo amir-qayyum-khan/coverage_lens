@@ -5,7 +5,6 @@ import ResultsGrid from './components/ResultsGrid';
 import AnalysisLoader from './components/AnalysisLoader';
 import Dashboard from './components/Dashboard';
 import SuperDashboard from './components/SuperDashboard';
-import CoverageDetails from './components/CoverageDetails';
 import DetachedView from './components/DetachedView';
 import logo from './assets/logo.png';
 import { getBasename } from './utils/pathUtils';
@@ -251,29 +250,7 @@ function App() {
         }
     }, [folderPath]);
 
-    const handleProjectReady = useCallback((path, cloneTestResults, branch) => {
-        setFolderPath(path);
-        setCurrentBranch(branch || null);
-        setView('details');
 
-        const folderKey = getBasename(path);
-        rememberClonePath(path);
-        const covTotal = cloneTestResults?.coverage?.total;
-        if (folderKey && covTotal) {
-            setSuperProjectMetrics((prev) => ({
-                ...prev,
-                [folderKey]: {
-                    lines: covTotal.lines,
-                    statements: covTotal.statements,
-                    branches: covTotal.branches
-                }
-            }));
-        }
-
-        // We need to trigger analysis. Since handleAnalyze depends on folderPath,
-        // we call it with the explicit path to avoid waiting for state update.
-        handleAnalyze(path);
-    }, [handleAnalyze]);
 
     // Merge analysis and coverage data for each file
     const getMergedResults = useCallback(() => {
@@ -394,12 +371,6 @@ function App() {
                         >
                             Code Analysis
                         </button>
-                        <button
-                            className={`nav-item ${view === 'details' ? 'active' : ''}`}
-                            onClick={() => setView('details')}
-                        >
-                            Details
-                        </button>
                     </nav>
                 </header>
             )}
@@ -422,15 +393,7 @@ function App() {
                         busy={superDashBusy}
                     />
                 ) : view === 'dashboard' ? (
-                    <Dashboard onProjectReady={handleProjectReady} />
-                ) : view === 'details' ? (
-                    <CoverageDetails
-                        coverageResults={coverageResults}
-                        analysisResults={analysisResults}
-                        folderPath={folderPath}
-                        executionTime={executionTime}
-                        branch={currentBranch}
-                    />
+                    <Dashboard />
                 ) : (
                     <div className="analysis-view fade-in">
                         {/* Coverage Warning */}

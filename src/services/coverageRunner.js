@@ -192,8 +192,9 @@ function getSourceFilesInFolder(folderPath) {
                     }
                 } else if (stat.isFile() && (item.endsWith('.js') || item.endsWith('.jsx'))) {
                     // Skip test and config files - Sync with codeAnalyzer.js
-                    const ignoreFiles = ['setupTests.js', 'webpack.config.js', 'babel.config.js', 'postBuild.js', 'babelDev.js', 'babelProd.js'];
-                    if (!item.endsWith('.test.js') && !item.endsWith('.spec.js') && !item.endsWith('.test.jsx') && !item.endsWith('.spec.jsx') && !ignoreFiles.includes(item)) {
+                    const ignoreFiles = ['setupTests.js', 'postBuild.js', 'babelDev.js', 'babelProd.js'];
+                    const isConfig = item.startsWith('webpack.') || item.startsWith('babel.config.') || item.startsWith('jest.config.') || item === '.babelrc';
+                    if (!item.endsWith('.test.js') && !item.endsWith('.spec.js') && !item.endsWith('.test.jsx') && !item.endsWith('.spec.jsx') && !ignoreFiles.includes(item) && !isConfig) {
                         files.push(fullPath);
                     }
                 }
@@ -378,21 +379,29 @@ module.exports = {
     ...baseConfig,
     bail: 0,
     collectCoverage: true,
-    collectCoverageFrom: [
-        '${globPattern}',
-        '!**/*.test.js',
-        '!**/*.spec.js',
-        '!**/__tests__/**',
-        '!**/i18n/**',
-        '!**/*.css',
-        '!**/*.scss',
-        '!**/*.less',
-        '!**/*.html',
-        '!**/*.json',
-        '!**/*.svg',
-        '!**/*.png',
-        '!**/*.jpg'
-    ],
+        collectCoverageFrom: [
+            '${globPattern}',
+            '!**/*.test.js',
+            '!**/*.test.jsx',
+            '!**/*.spec.js',
+            '!**/*.spec.jsx',
+            '!**/__tests__/**',
+            '!**/__mocks__/**',
+            '!**/i18n/**',
+            '!**/config/**',
+            '!**/webpack.*.js',
+            '!**/babel.config.*.js',
+            '!**/.babelrc',
+            '!**/jest.config.*.js',
+            '!**/*.css',
+            '!**/*.scss',
+            '!**/*.less',
+            '!**/*.html',
+            '!**/*.json',
+            '!**/*.svg',
+            '!**/*.png',
+            '!**/*.jpg'
+        ],
     coverageDirectory: '${coverageDir.replace(/\\/g, '/')}',
     coverageReporters: ['json-summary', 'json'],
     // Disable coverage threshold and bail so failing tests never block coverage output
@@ -544,7 +553,8 @@ module.exports = {
                         }
 
                         // Calculate relative path using original filePath for display
-                        const relativePath = path.relative(folderPath, filePath);
+                        // Use forward slashes for cross-platform consistency in mapping
+                        const relativePath = path.relative(folderPath, filePath).split(path.sep).join('/');
 
                         files.push({
                             filePath,
@@ -685,8 +695,10 @@ function formatMissingLines(lines) {
 module.exports = {
     runCoverage,
     formatMissingLines,
+    getMissingLines,
     findTestRoot,
     findJestProjectRoot,
     isJestProjectDirectory,
-    packageJsonDeclaresJest
+    packageJsonDeclaresJest,
+    findNearestJestConfig
 };

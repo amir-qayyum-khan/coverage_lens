@@ -6,6 +6,8 @@ const acorn = require('acorn');
 const IGNORE_FILE_PATTERNS = [
     /\.test\.js$/,
     /\.spec\.js$/,
+    /\.test\.jsx$/,
+    /\.spec\.jsx$/,
     /\.html$/,
     /\.css$/,
     /\.scss$/,
@@ -13,8 +15,10 @@ const IGNORE_FILE_PATTERNS = [
     /\.json$/,
     /\.md$/,
     /setupTests\.js$/,
-    /webpack\.config\.js$/,
-    /babel\.config\.js$/,
+    /webpack\..*\.js$/,
+    /babel\.config\..*\.js$/,
+    /\.babelrc$/,
+    /jest\.config\..*\.js$/,
     /postBuild\.js$/,
     /babelDev\.js$/,
     /babelProd\.js$/
@@ -228,7 +232,7 @@ function getJsFiles(folderPath, basePath = folderPath) {
                 if (!shouldIgnoreFolder(entry.name)) {
                     files.push(...getJsFiles(fullPath, basePath));
                 }
-            } else if (entry.isFile() && entry.name.endsWith('.js')) {
+            } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.jsx'))) {
                 if (!shouldIgnoreFile(entry.name)) {
                     files.push(fullPath);
                 }
@@ -267,7 +271,8 @@ async function analyzeFolder(folderPath) {
         const analysis = analyzeFile(filePath);
 
         // Make path relative to the root folderPath for consistency in UI
-        analysis.relativePath = path.relative(folderPath, filePath);
+        // Use forward slashes for cross-platform consistency in mapping
+        analysis.relativePath = path.relative(folderPath, filePath).split(path.sep).join('/');
 
         results.push(analysis);
 

@@ -63,16 +63,16 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
             coverageResults.files.forEach(f => coverageMap.set(f.relativePath, f));
         }
         return analysisResults.files.map(f => {
-            const cov = coverageMap.get(f.relativePath) || {};
+            const cov = coverageMap.get(f.relativePath);
             return {
                 relativePath: f.relativePath,
-                lineCoverage: cov.lines?.pct ?? null,
-                coveredLines: cov.lines?.covered ?? null,
-                totalLines: cov.lines?.total ?? null,
-                statementCoverage: cov.statements?.pct ?? null,
-                coveredStatements: cov.statements?.covered ?? null,
-                totalStatements: cov.statements?.total ?? null,
-                missingLines: cov.missingLines || [],
+                lineCoverage: cov?.lines?.pct ?? null,
+                coveredLines: cov?.lines?.covered ?? null,
+                totalLines: cov?.lines?.total ?? null,
+                statementCoverage: cov?.statements?.pct ?? null,
+                coveredStatements: cov?.statements?.covered ?? null,
+                totalStatements: cov?.statements?.total ?? null,
+                missingLines: cov ? (cov.missingLines || []) : null,
             };
         });
     }, [analysisResults, coverageResults]);
@@ -321,7 +321,11 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
                                                     </div>
                                                 </td>
                                                 <td>
-                                                    {file.missingLines && file.missingLines.length > 0 ? (
+                                                    {file.missingLines === null ? (
+                                                        <span className="cd-no-coverage" style={{ color: 'var(--text-muted)', fontSize: '11px', fontStyle: 'italic' }}>
+                                                            No coverage data
+                                                        </span>
+                                                    ) : file.missingLines.length > 0 ? (
                                                         <span className="missing-lines" title={file.missingLines.join(', ')}>
                                                             {file.missingLines.slice(0, 8).join(', ')}
                                                             {file.missingLines.length > 8 ? ` +${file.missingLines.length - 8} more` : ''}
