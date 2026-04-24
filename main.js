@@ -352,10 +352,12 @@ ipcMain.handle('superDashboard:browseReposParent', async () => {
     try {
         const childPaths = listImmediateChildDirectories(parentPath);
         return { success: true, parentPath, childPaths };
+
     } catch (error) {
         return { success: false, error: error.message };
     }
 });
+
 
 // Clone and Test an App
 ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentials, branch, progressKey }) => {
@@ -364,8 +366,9 @@ ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentia
             repoUrl,
             targetDir,
             (progress) => {
-                if (mainWindow) {
-                    mainWindow.webContents.send('app:progress', progress);
+                // Send progress to the window that initiated the request
+                if (!event.sender.isDestroyed()) {
+                    event.sender.send('app:progress', progress);
                 }
             },
             credentials,
@@ -450,10 +453,33 @@ ipcMain.handle('app:fetchRemoteCoverage', async (event, { repoUrl, credentials }
 
 // Open a URL in the system browser (for Gitea auth / token creation)
 ipcMain.handle('app:openExternal', async (event, { url }) => {
-    try {
-        await shell.openExternal(url);
-        return { success: true };
-    } catch (e) {
-        return { success: false, message: e.message };
-    }
+    if (url) shell.openExternal(url);
+});
+
+// Open a detached window for a specific project's progress/details
+ipcMain.handle('app:openDetachedWindow', async (event, { app: appData, branch, targetDir }) => {
+    const detachedWindow = new BrowserWindow({
+        width: 1000,
+        height: 700,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js')
+        },
+        backgroundColor: '#0f0f1a',
+        title: `Voyagerr Lens - ${appData.name}`
+    });
+
+    const params = {
+        view: 'detached',
+        repoName: appData.name,
+        repoUrl: appData.url,
+        branch: branch || '',
+        targetDir: targetDir || ''
+    };
+
+    // Load index.html with query parameters
+    detachedWindow.loadFile(path.join(__dirname, 'dist', 'index.html'), { 
+        query: params 
+    });
 });

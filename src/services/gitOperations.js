@@ -16,7 +16,8 @@ function runGitCommand(args, cwd, timeout = 120000) {
         const git = spawn('git', args, {
             cwd,
             shell: true,
-            timeout
+            timeout,
+            windowsHide: true
         });
 
         let stdout = '';
@@ -261,6 +262,7 @@ function runTests(clonePath, sendProgress, branch) {
         if (!jestRoot) {
             resolve({
                 success: false,
+                hasCoverage: false,
                 message:
                     'No Jest project found: need package.json with jest.config.* or Jest in dependencies under the clone.',
                 totalTests: 0,
@@ -330,17 +332,22 @@ function runTests(clonePath, sendProgress, branch) {
                                 statements: data.statements
                             }))
                     };
+                    results.hasCoverage = true;
+                } else {
+                    results.hasCoverage = false;
                 }
             } catch (covErr) {
                 console.warn('Failed to parse coverage summary:', covErr.message);
             }
 
+            console.log(`[runTests] Writing super dashboard summary to: ${clonePath}`);
             results.superDashboardSummaryPath = writeSuperDashboardJestSummary(
                 clonePath,
                 branch,
                 jestRoot,
                 results
             );
+            console.log(`[runTests] Summary written: ${results.superDashboardSummaryPath || 'FAILED'}`);
 
             resolve(results);
         });
@@ -348,6 +355,7 @@ function runTests(clonePath, sendProgress, branch) {
         jestChild.on('error', (err) => {
             resolve({
                 success: false,
+                hasCoverage: false,
                 message: `Failed to run tests: ${err.message}`,
                 totalTests: 0,
                 passedTests: 0,
@@ -480,6 +488,16 @@ async function pushCoverageReport(clonePath, branch, credentials) {
     const COMMIT_MSG = 'chore: update coverage report [skip ci]';
 
     console.log(`[GitPush] Starting push for ${path.basename(clonePath)} on branch ${branch}...`);
+    console.log(`[GitPush] Clone path: ${clonePath}`);
+    console.log(`[GitPush] Path exists: ${fs.existsSync(clonePath)}`);
+    console.log(`[GitPush] Is git repo: ${fs.existsSync(path.join(clonePath, '.git'))}`);
+
+    if (!fs.existsSync(clonePath)) {
+        return { success: false, message: `Clone path does not exist: ${clonePath}` };
+    }
+    if (!fs.existsSync(path.join(clonePath, '.git'))) {
+        return { success: false, message: `Not a git repository: ${clonePath}` };
+    }
 
     // Resolve origin URL (for auth injection)
     const originResult = await runGitCommand(['remote', 'get-url', 'origin'], clonePath);
@@ -503,9 +521,23 @@ async function pushCoverageReport(clonePath, branch, credentials) {
         await runGitCommand(['config', 'user.name', 'Voyagerr Lens Reporter'], clonePath);
     }
 
-    // Stage the coverage file (use -f to bypass .gitignore if necessary)
-    console.log(`[GitPush] Staging file: ${COVERAGE_FILE}`);
-    const addResult = await runGitCommand(['add', '-f', COVERAGE_FILE], clonePath);
+    // Verify the coverage file exists before staging
+    const coverageFilePath = path.join(clonePath, '.code-analyzer', 'super-dashboard-jest.json');
+    const coverageFileExists = fs.existsSync(coverageFilePath);
+    console.log(`[GitPush] Coverage file path: ${coverageFilePath}`);
+    console.log(`[GitPush] Coverage file exists: ${coverageFileExists}`);
+    if (!coverageFileExists) {
+        console.error('[GitPush] Coverage report file not found — aborting push.');
+        return { 
+            success: false, 
+            message: `Coverage report file not found at ${coverageFilePath}. Please re-run the tests first.` 
+        };
+    }
+
+    // Stage the coverage file using OS-native relative path (use -f to bypass .gitignore if necessary)
+    const coverageFileRelative = path.join('.code-analyzer', 'super-dashboard-jest.json');
+    console.log(`[GitPush] Staging file: ${coverageFileRelative}`);
+    const addResult = await runGitCommand(['add', '-f', '--', coverageFileRelative], clonePath);
     if (!addResult.success) {
         console.error('[GitPush] Add failed:', stripCreds(addResult.stderr));
         return { success: false, message: `git add failed: ${stripCreds(addResult.stderr)}` };
@@ -548,7 +580,6 @@ async function pushCoverageReport(clonePath, branch, credentials) {
 
     // --- Conflict resolution ---
     console.log('[GitPush] Conflict detected. Attempting resolution...');
-    const coverageFilePath = path.join(clonePath, '.code-analyzer', 'super-dashboard-jest.json');
     let savedContent = null;
     try {
         savedContent = fs.readFileSync(coverageFilePath, 'utf8');
@@ -589,7 +620,7 @@ async function pushCoverageReport(clonePath, branch, credentials) {
 
     // 6. Stage + commit + push again
     console.log('[GitPush] Re-committing and retrying push...');
-    await runGitCommand(['add', '-f', COVERAGE_FILE], clonePath);
+    await runGitCommand(['add', '-f', '--', coverageFileRelative], clonePath);
     await runGitCommand(['commit', '-m', `"${COMMIT_MSG}"`, '--allow-empty'], clonePath);
 
     const retryPushResult = await runGitCommand(pushArgs, clonePath);

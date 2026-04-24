@@ -77,5 +77,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Open URL in system browser (Gitea auth / token page)
     openExternal: (url) =>
-        ipcRenderer.invoke('app:openExternal', { url })
+        ipcRenderer.invoke('app:openExternal', { url }),
+
+    // Open a detached window for a specific project's progress/details
+    openDetachedWindow: (app, branch, targetDir) =>
+        ipcRenderer.invoke('app:openDetachedWindow', { app, branch, targetDir })
 });

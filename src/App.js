@@ -6,6 +6,7 @@ import AnalysisLoader from './components/AnalysisLoader';
 import Dashboard from './components/Dashboard';
 import SuperDashboard from './components/SuperDashboard';
 import CoverageDetails from './components/CoverageDetails';
+import DetachedView from './components/DetachedView';
 import logo from './assets/logo.png';
 import { getBasename } from './utils/pathUtils';
 import {
@@ -108,6 +109,12 @@ function App() {
     }, [persistAndReloadSuperPaths]);
 
     useEffect(() => {
+        // Detect detached view from URL parameters
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('view') === 'detached') {
+            setView('detached');
+        }
+
         let cancelled = false;
         (async () => {
             let pathsFromFile = [];
@@ -362,38 +369,40 @@ function App() {
 
     return (
         <div className="app">
-            <header className="main-header">
-                <div className="header-left">
-                    <img src={logo} alt="Voyagerr Lens" className="app-logo" />
-                    <h1 className="app-title">Voyagerr Lens</h1>
-                </div>
-                <nav className="main-nav">
-                    <button
-                        className={`nav-item ${view === 'super' ? 'active' : ''}`}
-                        onClick={() => setView('super')}
-                    >
-                        Super Dashboard
-                    </button>
-                    <button
-                        className={`nav-item ${view === 'dashboard' ? 'active' : ''}`}
-                        onClick={() => setView('dashboard')}
-                    >
-                        Dashboard
-                    </button>
-                    <button
-                        className={`nav-item ${view === 'analysis' ? 'active' : ''}`}
-                        onClick={() => setView('analysis')}
-                    >
-                        Code Analysis
-                    </button>
-                    <button
-                        className={`nav-item ${view === 'details' ? 'active' : ''}`}
-                        onClick={() => setView('details')}
-                    >
-                        Details
-                    </button>
-                </nav>
-            </header>
+            {view !== 'detached' && (
+                <header className="main-header">
+                    <div className="header-left">
+                        <img src={logo} alt="Voyagerr Lens" className="app-logo" />
+                        <h1 className="app-title">Voyagerr Lens</h1>
+                    </div>
+                    <nav className="main-nav">
+                        <button
+                            className={`nav-item ${view === 'super' ? 'active' : ''}`}
+                            onClick={() => setView('super')}
+                        >
+                            Super Dashboard
+                        </button>
+                        <button
+                            className={`nav-item ${view === 'dashboard' ? 'active' : ''}`}
+                            onClick={() => setView('dashboard')}
+                        >
+                            Dashboard
+                        </button>
+                        <button
+                            className={`nav-item ${view === 'analysis' ? 'active' : ''}`}
+                            onClick={() => setView('analysis')}
+                        >
+                            Code Analysis
+                        </button>
+                        <button
+                            className={`nav-item ${view === 'details' ? 'active' : ''}`}
+                            onClick={() => setView('details')}
+                        >
+                            Details
+                        </button>
+                    </nav>
+                </header>
+            )}
 
             <main className="content">
                 {error && (
@@ -403,7 +412,9 @@ function App() {
                     </div>
                 )}
 
-                {view === 'super' ? (
+                {view === 'detached' ? (
+                    <DetachedView />
+                ) : view === 'super' ? (
                     <SuperDashboard
                         knownClonePaths={superKnownClonePaths}
                         onBrowseReposParent={handleBrowseSuperReposParent}

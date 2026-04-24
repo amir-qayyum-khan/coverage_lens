@@ -102,55 +102,19 @@ function Dashboard({ onProjectReady }) {
     };
 
     const handleCloneAndTest = async (app) => {
-        // Find or Choose a base directory for clones? 
-        // For now, let's assume we clone into a "repos" folder in the current workspace or similar
-        // Let's ask the user to select a folder first if we don't have one?
-        // Actually, the easiest is to just use the code-analyzer directory's parent or a specific subfolder.
-        // User didn't specify, so I'll show a folder selection dialog for the base path if not set.
+        const branch = branchInputs[app.name];
 
         try {
             const baseDir = await window.electronAPI.selectFolder();
             if (!baseDir) return;
 
-            setAppStatuses(prev => ({
-                ...prev,
-                [app.name]: { status: 'loading', stage: 'starting', message: 'Initiating...', percent: 0 }
-            }));
-
-            const result = await window.electronAPI.cloneAndTest(
-                app.url,
-                baseDir,
-                gitCredentials,
-                branchInputs[app.name],
-                app.name
-            );
-
-            // Single atomic update — clonePath must be here for the push to work
-            setAppStatuses(prev => ({
-                ...prev,
-                [app.name]: {
-                    status: result.success ? 'success' : 'error',
-                    message: result.data?.message || result.message,
-                    branch: result.data?.branch || null,
-                    testResults: result.data?.testResults || null,
-                    clonePath: result.success ? (result.data?.clonePath || null) : null,
-                    percent: 100
-                }
-            }));
-
-            // Automatically switch to analysis view if integration callback exists
-            if (result.success && result.data?.clonePath) {
-                rememberClonePath(result.data.clonePath);
-            }
-            if (result.success && onProjectReady && result.data?.clonePath) {
-                onProjectReady(result.data.clonePath, result.data.testResults, result.data.branch);
-            }
-
+            // Open a new detached window for this project
+            await window.electronAPI.openDetachedWindow(app, branch, baseDir);
+            
+            // Note: We don't need to update appStatuses here anymore 
+            // as the new window handles its own lifecycle.
         } catch (err) {
-            setAppStatuses(prev => ({
-                ...prev,
-                [app.name]: { status: 'error', message: err.message, percent: 100 }
-            }));
+            setError(err.message);
         }
     };
 
