@@ -410,7 +410,6 @@ module.exports = {
             '!**/WeStore.js',
             '!**/version.js',
             '!**/store.js',
-            '!**/coverage-booking-folder/**',
             '!**/lcov-report/**',
             '!**/*.css',
             '!**/*.scss',
@@ -449,11 +448,15 @@ module.exports = {
             maxWorkers
         ];
 
-        // Always pass target directory to Jest. This matches test files within the directory
-        // and avoids the issue where --findRelatedTests skips tests due to dependency resolution failures.
-        const normalizedTargetDir = targetAnalysisPath.split(path.sep).join('/');
-        console.log(`[CoverageRunner] Passing target folder directly to Jest: ${normalizedTargetDir}`);
-        jestArgs.push(normalizedTargetDir);
+        // Always pass target directory via --testPathPattern. This avoids issues with absolute paths 
+        // on Windows where drive letter casing (d:/ vs D:/) causes the Jest regex matcher to skip tests.
+        // It also mirrors the exact command line behavior users expect.
+        if (relativeToRoot) {
+            jestArgs.push(`--testPathPattern=${relativeToRoot}`);
+            console.log(`[CoverageRunner] Scoping tests via --testPathPattern=${relativeToRoot}`);
+        } else {
+            console.log(`[CoverageRunner] Analyzing project root, running all tests.`);
+        }
 
         console.log(`[CoverageRunner] Project Root: ${projectRoot}`);
         console.log(`[CoverageRunner] Folder Path: ${folderPath}`);
@@ -478,10 +481,10 @@ module.exports = {
         const jest = spawn(command, spawnArgs, {
             cwd: projectRoot,
             shell: true,
-            env: { 
-                ...process.env, 
+            env: {
+                ...process.env,
                 CI: 'true',
-                NODE_OPTIONS: process.env.NODE_OPTIONS 
+                NODE_OPTIONS: process.env.NODE_OPTIONS
                     ? `${process.env.NODE_OPTIONS} --max-old-space-size=4096`
                     : '--max-old-space-size=4096'
             }
