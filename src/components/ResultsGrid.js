@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 
 /**
  * ResultsGrid component displaying file-level metrics in a table
@@ -7,6 +7,16 @@ import React from 'react';
  * @param {number} props.totalFiles - Total number of files
  */
 function ResultsGrid({ files, totalFiles }) {
+    const [filterText, setFilterText] = useState('');
+
+    const filteredFiles = useMemo(() => {
+        if (!filterText) return files || [];
+        const lowFilter = filterText.toLowerCase();
+        return (files || []).filter(f => 
+            (f.relativePath || '').toLowerCase().includes(lowFilter)
+        );
+    }, [files, filterText]);
+
     const formatNumber = (num) => {
         if (num === null || num === undefined) return '—';
         return num.toLocaleString();
@@ -89,9 +99,26 @@ function ResultsGrid({ files, totalFiles }) {
 
     return (
         <section className="results-section fade-in">
-            <div className="results-header">
-                <h2 className="results-title">File Analysis</h2>
-                <span className="results-count">{totalFiles} files</span>
+            <div className="cd-section-header">
+                <h2 className="results-title" style={{ margin: 0 }}>File Analysis</h2>
+                
+                <div className="cd-filter-container">
+                    <div className="cd-filter-icon">🔍</div>
+                    <input
+                        type="text"
+                        className="cd-filter-input"
+                        placeholder="Filter files..."
+                        value={filterText}
+                        onChange={(e) => setFilterText(e.target.value)}
+                    />
+                    {filterText && (
+                        <button className="cd-filter-clear" onClick={() => setFilterText('')} title="Clear filter">
+                            &times;
+                        </button>
+                    )}
+                </div>
+                
+                <span className="results-count">{filteredFiles.length} / {totalFiles} files</span>
             </div>
 
             <div className="results-container">
@@ -108,7 +135,7 @@ function ResultsGrid({ files, totalFiles }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {files.map((file, index) => (
+                            {filteredFiles.map((file, index) => (
                                 <tr key={file.relativePath || index}>
                                     <td className="file-name" title={file.relativePath}>
                                         {file.relativePath}

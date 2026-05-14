@@ -124,21 +124,23 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
         }
         sendProgress('fetching', 'Fetch complete', 40);
 
-        // Step 3: Try checkout the specified branch (default to master)
+        // Step 3: Checkout and sync with remote
         const targetBranch = branch || 'master';
-        sendProgress('checkout', `Trying to checkout ${targetBranch}...`, 45);
+        sendProgress('checkout', `Checking out ${targetBranch}...`, 45);
 
-        // Try to checkout existing or track from origin
-        let checkoutResult = await runGitCommand(['checkout', targetBranch], clonePath);
+        // Try to checkout existing (use -f to discard any accidental local changes)
+        let checkoutResult = await runGitCommand(['checkout', '-f', targetBranch], clonePath);
 
         if (!checkoutResult.success) {
             // Try to create/track from remote if it exists but not locally
             checkoutResult = await runGitCommand(['checkout', '-b', targetBranch, `origin/${targetBranch}`], clonePath);
 
+            // If it still fails with "already exists", try one last force checkout
+            if (!checkoutResult.success && checkoutResult.stderr.includes('already exists')) {
+                checkoutResult = await runGitCommand(['checkout', '-f', targetBranch], clonePath);
+            }
+
             if (!checkoutResult.success) {
-                // If the user specified a branch and it failed, we should probably stop here
-                // but if they didn't, we might want to try other defaults? 
-                // For now, let's just fail if the target branch (master or provided) doesn't exist.
                 return {
                     success: false,
                     message: `Branch ${targetBranch} not found: ${checkoutResult.stderr}`,
@@ -150,7 +152,14 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
 
         const activeBranch = targetBranch;
 
-        sendProgress('checkout', `Checked out ${activeBranch}`, 55);
+        // Step 4: Hard reset to remote to ensure we have the latest code
+        sendProgress('checkout', `Resetting to latest origin/${activeBranch}...`, 50);
+        const resetResult = await runGitCommand(['reset', '--hard', `origin/${activeBranch}`], clonePath);
+        if (!resetResult.success) {
+            sendProgress('checkout', `Reset warning: ${resetResult.stderr}`, 52);
+        }
+
+        sendProgress('checkout', `Checked out and updated ${activeBranch}`, 55);
 
         // Step 5: Install dependencies at clone root and/or nested Jest package (monorepos / inner package.json)
         sendProgress('installing_deps', 'Checking dependencies...', 75);

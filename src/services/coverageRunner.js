@@ -337,20 +337,31 @@ async function runCoverage(folderPath) {
         const coverageDir = path.join(projectRoot, 'coverage_temp');
 
         // Determine where the actual source lives.
-        // Priority: src/ inside projectRoot > src/ inside folderPath > projectRoot itself.
-        // This handles the common case where projectRoot is a subdirectory of folderPath
-        // (e.g. folderPath=TrapezeDRTCoreUI, projectRoot=TrapezeDRTCoreUI/source).
         let targetAnalysisPath;
-        const srcInProjectRoot = path.join(projectRoot, 'src');
-        const srcInFolderPath = path.join(folderPath, 'src');
-        if (fs.existsSync(srcInProjectRoot) && fs.statSync(srcInProjectRoot).isDirectory()) {
-            console.log(`[CoverageRunner] src directory detected inside projectRoot, focusing analysis on: ${srcInProjectRoot}`);
-            targetAnalysisPath = srcInProjectRoot;
-        } else if (fs.existsSync(srcInFolderPath) && fs.statSync(srcInFolderPath).isDirectory()) {
-            console.log(`[CoverageRunner] src directory detected inside folderPath, focusing analysis on: ${srcInFolderPath}`);
-            targetAnalysisPath = srcInFolderPath;
+        const relativeFolderToProject = path.relative(projectRoot, folderPath);
+        const isFolderInsideProject = !relativeFolderToProject.startsWith('..') && !path.isAbsolute(relativeFolderToProject);
+
+        if (isFolderInsideProject) {
+            // folderPath is inside projectRoot. Just use folderPath.
+            // But if it's the exact same as projectRoot, we might still want to look for src.
+            if (relativeFolderToProject === '') {
+                const srcInProjectRoot = path.join(projectRoot, 'src');
+                if (fs.existsSync(srcInProjectRoot) && fs.statSync(srcInProjectRoot).isDirectory()) {
+                    targetAnalysisPath = srcInProjectRoot;
+                } else {
+                    targetAnalysisPath = projectRoot;
+                }
+            } else {
+                targetAnalysisPath = folderPath;
+            }
         } else {
-            targetAnalysisPath = projectRoot;
+            // folderPath is outside projectRoot, fallback to projectRoot or its src
+            const srcInProjectRoot = path.join(projectRoot, 'src');
+            if (fs.existsSync(srcInProjectRoot) && fs.statSync(srcInProjectRoot).isDirectory()) {
+                targetAnalysisPath = srcInProjectRoot;
+            } else {
+                targetAnalysisPath = projectRoot;
+            }
         }
 
         // Build glob relative to projectRoot (Jest resolves collectCoverageFrom relative to rootDir/projectRoot).
@@ -438,21 +449,11 @@ module.exports = {
             maxWorkers
         ];
 
-        if (!isLargeProject && sourceFiles.length > 0) {
-            // Small project: find related tests from source files
-            // Normalize all source file paths for Windows shell compatibility
-            const normalizedSourceFiles = sourceFiles.map(f => f.split(path.sep).join('/'));
-            jestArgs.push('--findRelatedTests', ...normalizedSourceFiles);
-            console.log(`[CoverageRunner] Small project: using --findRelatedTests with ${sourceFiles.length} source files`);
-        } else {
-            // Large project: just pass the target folder path to Jest.
-            // Jest will automatically find and run all tests within that folder.
-            // This avoids the "Command line is too long" error on Windows.
-            // Normalize path for Windows/Jest compatibility
-            const normalizedTargetDir = targetAnalysisPath.split(path.sep).join('/');
-            console.log(`[CoverageRunner] Large project: passing target folder directly to Jest: ${normalizedTargetDir}`);
-            jestArgs.push(normalizedTargetDir);
-        }
+        // Always pass target directory to Jest. This matches test files within the directory
+        // and avoids the issue where --findRelatedTests skips tests due to dependency resolution failures.
+        const normalizedTargetDir = targetAnalysisPath.split(path.sep).join('/');
+        console.log(`[CoverageRunner] Passing target folder directly to Jest: ${normalizedTargetDir}`);
+        jestArgs.push(normalizedTargetDir);
 
         console.log(`[CoverageRunner] Project Root: ${projectRoot}`);
         console.log(`[CoverageRunner] Folder Path: ${folderPath}`);
@@ -477,7 +478,13 @@ module.exports = {
         const jest = spawn(command, spawnArgs, {
             cwd: projectRoot,
             shell: true,
-            env: { ...process.env, CI: 'true' }
+            env: { 
+                ...process.env, 
+                CI: 'true',
+                NODE_OPTIONS: process.env.NODE_OPTIONS 
+                    ? `${process.env.NODE_OPTIONS} --max-old-space-size=4096`
+                    : '--max-old-space-size=4096'
+            }
         });
 
         let stdout = '';

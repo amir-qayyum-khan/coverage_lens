@@ -4,6 +4,7 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
     const [sortKey, setSortKey] = useState('lineCoverage');
     const [sortDir, setSortDir] = useState('desc');
     const [showConfirm, setShowConfirm] = useState(false);
+    const [filterText, setFilterText] = useState('');
     const [pushStatus, setPushStatus] = useState({ state: 'idle', msg: '' }); // 'idle' | 'pushing' | 'pushed' | 'error'
 
     // Get credentials from localStorage
@@ -77,14 +78,20 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
         });
     }, [analysisResults, coverageResults]);
 
+    const filteredFiles = useMemo(() => {
+        if (!filterText) return files;
+        const lowFilter = filterText.toLowerCase();
+        return files.filter(f => f.relativePath.toLowerCase().includes(lowFilter));
+    }, [files, filterText]);
+
     const sorted = useMemo(() => {
-        return [...files].sort((a, b) => {
+        return [...filteredFiles].sort((a, b) => {
             const va = a[sortKey] ?? (sortDir === 'asc' ? Infinity : -Infinity);
             const vb = b[sortKey] ?? (sortDir === 'asc' ? Infinity : -Infinity);
             if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
             return sortDir === 'asc' ? va - vb : vb - va;
         });
-    }, [files, sortKey, sortDir]);
+    }, [filteredFiles, sortKey, sortDir]);
 
     const handleSort = (key) => {
         if (sortKey === key) {
@@ -262,9 +269,27 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
                         </div>
                     </div>
 
-                    {/* File-Level Coverage Table */}
-                    <div className="cd-section-title" style={{ marginTop: 'var(--spacing-xl)' }}>
-                        File Coverage <span className="cd-file-count">({sorted.length} files)</span>
+                    {/* File-Level Coverage Table Header with Filter */}
+                    <div className="cd-section-header">
+                        <div className="cd-section-title" style={{ marginBottom: 0 }}>
+                            File Coverage <span className="cd-file-count">({sorted.length} files)</span>
+                        </div>
+                        
+                        <div className="cd-filter-container">
+                            <div className="cd-filter-icon">🔍</div>
+                            <input
+                                type="text"
+                                className="cd-filter-input"
+                                placeholder="Filter files (e.g. booking)..."
+                                value={filterText}
+                                onChange={(e) => setFilterText(e.target.value)}
+                            />
+                            {filterText && (
+                                <button className="cd-filter-clear" onClick={() => setFilterText('')} title="Clear filter">
+                                    &times;
+                                </button>
+                            )}
+                        </div>
                     </div>
 
                     <div className="results-container">
