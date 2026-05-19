@@ -4,7 +4,9 @@ const path = require('path');
 const { EventEmitter } = require('events');
 
 jest.mock('./coverageRunner', () => ({
-    findJestProjectRoot: jest.fn()
+    findJestProjectRoot: jest.fn(),
+    findNearestJestConfig: jest.fn(),
+    getMissingLines: jest.fn(() => [])
 }));
 
 jest.mock('child_process', () => ({
@@ -12,8 +14,13 @@ jest.mock('child_process', () => ({
 }));
 
 const { spawn } = require('child_process');
-const { findJestProjectRoot } = require('./coverageRunner');
-const { runTests, parseJestOutput, resolveJestSpawn } = require('./gitOperations');
+const { findJestProjectRoot, findNearestJestConfig } = require('./coverageRunner');
+const {
+    runTests,
+    parseJestOutput,
+    mapCoverageSummaryFiles,
+    resolveJestSpawn
+} = require('./gitOperations');
 
 function mockJestChild(exitCode, stdoutText = '') {
     const proc = new EventEmitter();
@@ -88,6 +95,7 @@ describe('gitOperations', () => {
             );
 
             findJestProjectRoot.mockReturnValue(jestRoot);
+            findNearestJestConfig.mockReturnValue(null);
             spawn.mockImplementation(() =>
                 mockJestChild(0, 'Tests:       1 passed, 1 total\nTest Suites: 1 passed, 1 total\n')
             );
@@ -106,6 +114,31 @@ describe('gitOperations', () => {
             expect(written.branch).toBe('feature/x');
             expect(written.coverage.lines.pct).toBe(100);
             expect(written.reportSource).toBe('clone-test');
+        });
+    });
+
+    describe('mapCoverageSummaryFiles', () => {
+        test('maps relative jest keys to clone-relative paths for CoreUI layout', () => {
+            const clonePath = tmpDir;
+            const jestRoot = path.join(tmpDir, 'source');
+            fs.mkdirSync(jestRoot, { recursive: true });
+
+            const relKey = 'src/components/booking/BookingDetails.js';
+            const absFile = path.join(jestRoot, relKey);
+            const summary = {
+                [relKey]: {
+                    lines: { total: 10, covered: 5, pct: 50 },
+                    statements: { total: 10, covered: 5, pct: 50 },
+                    branches: { total: 0, covered: 0, pct: 100 }
+                }
+            };
+
+            const files = mapCoverageSummaryFiles(summary, {}, clonePath, jestRoot);
+            expect(files).toHaveLength(1);
+            expect(files[0].relativePath).toBe('source/src/components/booking/BookingDetails.js');
+            expect(files[0].relativePathKey).toBe(
+                'source/src/components/booking/bookingdetails.js'
+            );
         });
     });
 

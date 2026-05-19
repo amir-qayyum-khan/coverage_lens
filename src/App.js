@@ -13,6 +13,7 @@ import {
     rememberClonePath,
     syncKnownClonePathsToLocalStorage
 } from './utils/superDashboardClonePaths';
+import { lookupCoverageForAnalysis } from './utils/coverageMerge';
 
 function App() {
     const [view, setView] = useState('dashboard');
@@ -252,19 +253,11 @@ function App() {
 
 
 
-    // Merge analysis and coverage data for each file
     const getMergedResults = useCallback(() => {
-        if (!analysisResults) return [];
+        if (!analysisResults?.files) return [];
 
-        const coverageMap = new Map();
-        if (coverageResults && coverageResults.files) {
-            coverageResults.files.forEach(file => {
-                coverageMap.set(file.relativePath, file);
-            });
-        }
-
-        return analysisResults.files.map(file => {
-            const coverage = coverageMap.get(file.relativePath) || {};
+        return analysisResults.files.map((file) => {
+            const coverage = lookupCoverageForAnalysis(coverageResults?.files, file.relativePath) || {};
             return {
                 ...file,
                 lineCoverage: coverage.lines?.pct ?? null,

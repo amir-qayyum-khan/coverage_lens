@@ -115,6 +115,15 @@ app.on('activate', () => {
 
 // IPC Handlers
 
+ipcMain.handle('fs:exists', async (_event, filePath) => {
+    if (!filePath || typeof filePath !== 'string') return false;
+    try {
+        return fs.existsSync(filePath);
+    } catch {
+        return false;
+    }
+});
+
 // Open folder dialog
 ipcMain.handle('dialog:openDirectory', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {

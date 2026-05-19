@@ -2,8 +2,20 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { writeSuperDashboardJestSummary } = require('./superDashboardPersist');
+const { isFileUnderFolder, toDisplayRelativePath } = require('../utils/coveragePaths');
+const { normalizeRelativeKey, canonicalPathKey } = require('../utils/coverageMerge');
+const { buildCollectCoverageFromPatterns } = require('../utils/coverageGlobs');
+const { parseJestOutput } = require('../utils/jestOutputParser');
+const {
+    resolveTargetAnalysisPath,
+    isFullSourceTreeScope,
+    findSourceRootUnder,
+    resolveJestCoverageScope
+} = require('../utils/sourceRoot');
 
 const JEST_CONFIG_FILENAMES = ['jest.config.js', 'jest.config.ts', 'jest.config.mjs', 'jest.config.cjs'];
+const MAX_SOURCE_FILES_THROTTLE = 150;
+const BATCH_SKIP_DIRS = ['node_modules', '__tests__', '__mocks__', 'i18n', 'config', 'coverage', 'dist', 'build'];
 
 /**
  * Find the nearest package.json starting from the given path and moving up
@@ -43,29 +55,22 @@ function findNearestJestConfig(startPath) {
 
 /**
  * Search downward from startPath to find a directory containing both package.json and jest.config.js
- * This identifies the true test root of a project where coverage can be run.
  * @param {string} startPath - Path to start searching from
  * @returns {string|null} - Path to the directory containing both files, or null
  */
 function findTestRoot(startPath) {
     const skipDirs = ['node_modules', '.git', 'dist', 'build', 'coverage', 'coverage_temp'];
 
-    /**
-     * Check if a directory contains both package.json and a jest config file
-     */
     function hasBothFiles(dirPath) {
         const hasPackageJson = fs.existsSync(path.join(dirPath, 'package.json'));
         if (!hasPackageJson) return false;
-
         return JEST_CONFIG_FILENAMES.some((name) => fs.existsSync(path.join(dirPath, name)));
     }
 
-    // First check the startPath itself
     if (hasBothFiles(startPath)) {
         return startPath;
     }
 
-    // Recursively search subdirectories (breadth-first)
     function searchDown(dirPath) {
         try {
             const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -81,7 +86,6 @@ function findTestRoot(startPath) {
                 subDirs.push(fullPath);
             }
 
-            // Search deeper
             for (const subDir of subDirs) {
                 const result = searchDown(subDir);
                 if (result) return result;
@@ -185,13 +189,11 @@ function getSourceFilesInFolder(folderPath) {
                 const stat = fs.statSync(fullPath);
 
                 if (stat.isDirectory()) {
-                    // Skip common non-source directories - Sync with codeAnalyzer.js
                     const ignoreFolders = ['node_modules', '__tests__', 'coverage', 'dist', 'build', 'i18n', '.git', 'public', 'assets', '__mocks__', 'config', 'coverage-booking-folder', 'lcov-report'];
                     if (!ignoreFolders.includes(item)) {
                         walk(fullPath);
                     }
                 } else if (stat.isFile() && (item.endsWith('.js') || item.endsWith('.jsx'))) {
-                    // Skip test and config files - Sync with codeAnalyzer.js
                     const ignoreFiles = ['setupTests.js', 'postBuild.js', 'babelDev.js', 'babelProd.js', 'preStart.js', 'babel.prod.js', 'babel.dev.js', 'WeStore.js', 'version.js', 'store.js'];
                     const isConfig = item.startsWith('webpack.') || item.startsWith('babel.config.') || item.startsWith('jest.config.') || item === '.babelrc' || item.startsWith('.eslintrc');
                     if (!item.endsWith('.test.js') && !item.endsWith('.spec.js') && !item.endsWith('.test.jsx') && !item.endsWith('.spec.jsx') && !ignoreFiles.includes(item) && !isConfig) {
@@ -209,275 +211,227 @@ function getSourceFilesInFolder(folderPath) {
 }
 
 /**
- * Get all test files (*.test.js, *.spec.js, files in __tests__) in a folder recursively
- * @param {string} folderPath - Path to search
- * @returns {string[]} - Array of absolute test file paths
+ * Jest scopes for coverage runs. Large full-`src` trees are split by immediate child folder.
+ * @param {string} projectRoot
+ * @param {string} relativeToRoot - Scope relative to project root (e.g. "src", "src/components/booking")
+ * @param {number} sourceFileCount
+ * @returns {string[]}
  */
-function getTestFilesInFolder(folderPath) {
-    const files = [];
+function getBatchScopes(projectRoot, targetAnalysisPath, sourceFileCount) {
+    const scope = resolveJestCoverageScope(projectRoot, targetAnalysisPath);
 
-    function walk(dir) {
-        try {
-            const items = fs.readdirSync(dir);
-            for (const item of items) {
-                const fullPath = path.join(dir, item);
-                const stat = fs.statSync(fullPath);
-
-                if (stat.isDirectory()) {
-                    if (['node_modules', '.git', 'coverage', 'dist', 'build', 'coverage-booking-folder', 'lcov-report'].includes(item)) continue;
-                    walk(fullPath);
-                } else if (stat.isFile() && (item.endsWith('.test.js') || item.endsWith('.spec.js') || item.endsWith('.test.jsx') || item.endsWith('.spec.jsx'))) {
-                    files.push(fullPath);
-                }
-            }
-        } catch (err) {
-            console.warn(`[CoverageRunner] Error reading directory ${dir}:`, err.message);
-        }
+    if (sourceFileCount <= MAX_SOURCE_FILES_THROTTLE || !isFullSourceTreeScope(scope)) {
+        return [scope];
     }
 
-    walk(folderPath);
-    return files;
+    const srcPath = findSourceRootUnder(projectRoot);
+    if (!srcPath || !fs.existsSync(srcPath)) {
+        return [scope];
+    }
+
+    const batches = [];
+    try {
+        const entries = fs.readdirSync(srcPath, { withFileTypes: true });
+        for (const entry of entries) {
+            if (!entry.isDirectory() || BATCH_SKIP_DIRS.includes(entry.name)) continue;
+            const childScope = resolveJestCoverageScope(projectRoot, path.join(srcPath, entry.name));
+            batches.push(childScope);
+        }
+    } catch (err) {
+        console.warn(`[CoverageRunner] Failed to list src children for batching:`, err.message);
+        return [scope];
+    }
+
+    if (batches.length === 0) {
+        return [scope];
+    }
+
+    console.log(`[CoverageRunner] Large source tree (${sourceFileCount} files) — running ${batches.length} batched Jest scopes`);
+    return batches;
 }
 
 /**
- * Run Jest with coverage on a folder
- * @param {string} folderPath - Path to the folder containing cases/files to analyze
- * @returns {Promise<object>} - Coverage results
+ * Write temporary Jest config for a scoped coverage run.
+ * @param {string} projectRoot
+ * @param {string} scopeRelativeToRoot
+ * @param {string} coverageDir
+ * @param {string} configSuffix - Unique suffix for temp file name
+ * @returns {string} Absolute path to temp config
  */
-async function runCoverage(folderPath) {
-    return new Promise((resolve, reject) => {
-        // Find the test root: a directory with both package.json and jest.config.js
-        let projectRoot = findTestRoot(folderPath);
+function writeTempJestConfig(projectRoot, scopeRelativeToRoot, coverageDir, configSuffix) {
+    const projectConfigPath = findNearestJestConfig(projectRoot) || path.join(projectRoot, 'jest.config.js');
+    const escapedProjectConfigPath = projectConfigPath.replace(/\\/g, '/');
+    const patterns = buildCollectCoverageFromPatterns(scopeRelativeToRoot);
+    const patternsJson = JSON.stringify(patterns, null, 4).replace(/\n/g, '\n    ');
 
-        if (projectRoot) {
-            console.log(`[CoverageRunner] Found test root (package.json + jest.config) at: ${projectRoot}`);
-        } else {
-            // Fallback: find nearest package.json walking upward
-            console.log(`[CoverageRunner] No co-located package.json + jest.config found, falling back to nearest package root`);
-            projectRoot = findNearestPackageRoot(folderPath);
-        }
-
-        if (!projectRoot) {
-            console.warn('No package.json found in or above folder:', folderPath);
-            resolve({
-                success: true,
-                hasCoverage: false,
-                message: 'No package.json found in or above the selected folder.',
-                files: [],
-                summary: {
-                    lines: { total: 0, covered: 0, pct: 0 },
-                    statements: { total: 0, covered: 0, pct: 0 },
-                    functions: { total: 0, covered: 0, pct: 0 },
-                    branches: { total: 0, covered: 0, pct: 0 }
-                }
-            });
-            return;
-        }
-
-        console.log(`Running coverage from project root: ${projectRoot} for folder: ${folderPath}`);
-
-        // Check if node_modules exists - if not, auto-install before running coverage
-        const nodeModulesPath = path.join(projectRoot, 'node_modules');
-        const hasNodeModules = fs.existsSync(nodeModulesPath);
-        if (!hasNodeModules) {
-            console.log(`[CoverageRunner] node_modules not found at ${nodeModulesPath}, running npm install --legacy-peer-deps...`);
-            const { spawnSync } = require('child_process');
-            const installResult = spawnSync('npm', ['install', '--legacy-peer-deps'], {
-                cwd: projectRoot,
-                shell: true,
-                stdio: 'inherit',
-                env: { ...process.env }
-            });
-            if (installResult.status !== 0) {
-                console.error(`[CoverageRunner] npm install failed with code ${installResult.status}`);
-                resolve({
-                    success: false,
-                    hasCoverage: false,
-                    error: 'npm install --legacy-peer-deps failed. Check the project for dependency issues.',
-                    files: [],
-                    summary: {
-                        lines: { total: 0, covered: 0, pct: 0 },
-                        statements: { total: 0, covered: 0, pct: 0 },
-                        functions: { total: 0, covered: 0, pct: 0 },
-                        branches: { total: 0, covered: 0, pct: 0 }
-                    }
-                });
-                return;
-            }
-            console.log(`[CoverageRunner] npm install completed successfully, proceeding with coverage...`);
-        }
-
-        // Locate the local jest binary with multiple fallback options for Windows robustness
-        let jestBinPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
-        let useNodeToExecute = false;
-
-        if (process.platform === 'win32') {
-            const jestCmd = path.join(projectRoot, 'node_modules', '.bin', 'jest.cmd');
-            const jestJs = path.join(projectRoot, 'node_modules', 'jest', 'bin', 'jest.js');
-
-            if (fs.existsSync(jestCmd)) {
-                jestBinPath = jestCmd;
-            } else if (fs.existsSync(jestJs)) {
-                jestBinPath = jestJs;
-                useNodeToExecute = true;
-            } else if (!fs.existsSync(jestBinPath)) {
-                // If neither exists, we'll try 'npx jest' as a last resort
-                console.warn('[CoverageRunner] Local jest binary not found in expected locations, will try npx as fallback');
-                jestBinPath = 'npx';
-                useNodeToExecute = false;
-            }
-        }
-
-        // Normalize binary path for shell execution
-        if (jestBinPath !== 'npx') {
-            jestBinPath = jestBinPath.split(path.sep).join('/');
-        }
-
-        // Coverage output directory (in the project root)
-        const coverageDir = path.join(projectRoot, 'coverage_temp');
-
-        // Determine where the actual source lives.
-        let targetAnalysisPath;
-        const relativeFolderToProject = path.relative(projectRoot, folderPath);
-        const isFolderInsideProject = !relativeFolderToProject.startsWith('..') && !path.isAbsolute(relativeFolderToProject);
-
-        if (isFolderInsideProject) {
-            // folderPath is inside projectRoot. Just use folderPath.
-            // But if it's the exact same as projectRoot, we might still want to look for src.
-            if (relativeFolderToProject === '') {
-                const srcInProjectRoot = path.join(projectRoot, 'src');
-                if (fs.existsSync(srcInProjectRoot) && fs.statSync(srcInProjectRoot).isDirectory()) {
-                    targetAnalysisPath = srcInProjectRoot;
-                } else {
-                    targetAnalysisPath = projectRoot;
-                }
-            } else {
-                targetAnalysisPath = folderPath;
-            }
-        } else {
-            // folderPath is outside projectRoot, fallback to projectRoot or its src
-            const srcInProjectRoot = path.join(projectRoot, 'src');
-            if (fs.existsSync(srcInProjectRoot) && fs.statSync(srcInProjectRoot).isDirectory()) {
-                targetAnalysisPath = srcInProjectRoot;
-            } else {
-                targetAnalysisPath = projectRoot;
-            }
-        }
-
-        // Build glob relative to projectRoot (Jest resolves collectCoverageFrom relative to rootDir/projectRoot).
-        // Using path.relative(projectRoot, targetAnalysisPath) avoids the broken `../**/*.js` pattern
-        // that occurs when folderPath is a parent of projectRoot.
-        const relativeToRoot = path.relative(projectRoot, targetAnalysisPath).split(path.sep).join('/');
-        const globPattern = relativeToRoot ? `${relativeToRoot}/**/*.{js,jsx}` : '**/*.{js,jsx}';
-
-        // Get all source files in targetAnalysisPath for --findRelatedTests
-        const sourceFiles = getSourceFilesInFolder(targetAnalysisPath);
-        console.log(`[CoverageRunner] Found ${sourceFiles.length} source files in ${targetAnalysisPath}`);
-
-        // Create a temporary Jest config that overrides collectCoverageFrom
-        // This is necessary because the project's jest.config.js settings override CLI arguments
-        const tempConfigPath = path.join(projectRoot, 'jest.config.coverage-temp.js');
-        const projectConfigPath = findNearestJestConfig(projectRoot) || path.join(projectRoot, 'jest.config.js');
-
-        // Build config content that extends the existing config but overrides coverage settings
-        // We use the absolute path for require to ensure it works regardless of where the config is
-        const escapedProjectConfigPath = projectConfigPath.replace(/\\/g, '/');
-        const tempConfigContent = `
-// Temporary config generated by code-analyzer for folder-specific coverage
-const baseConfig = fs.existsSync('${escapedProjectConfigPath}') ? require('${escapedProjectConfigPath}') : {};
+    const tempConfigPath = path.join(projectRoot, `jest.config.coverage-temp${configSuffix}.js`);
+    const tempConfigContent = `
+const fs = require('fs');
 
 module.exports = {
-    ...baseConfig,
+    ...(function () {
+        const b = fs.existsSync('${escapedProjectConfigPath}') ? require('${escapedProjectConfigPath}') : {};
+        // Remove properties that can interfere with test discovery
+        const { testPathIgnorePatterns, coveragePathIgnorePatterns, coverageThreshold, bail, ...rest } = b;
+        return { ...rest };
+    })(),
     bail: 0,
     collectCoverage: true,
-        collectCoverageFrom: [
-            '${globPattern}',
-            '!**/*.test.js',
-            '!**/*.test.jsx',
-            '!**/*.spec.js',
-            '!**/*.spec.jsx',
-            '!**/__tests__/**',
-            '!**/__mocks__/**',
-            '!**/i18n/**',
-            '!**/webpack*.js',
-            '!**/babel.config*.js',
-            '!**/.babelrc',
-            '!**/jest.config*.js',
-            '!**/preStart.js',
-            '!**/babel.prod.js',
-            '!**/babel.dev.js',
-            '!**/.eslintrc*',
-            '!**/WeStore.js',
-            '!**/version.js',
-            '!**/store.js',
-            '!**/lcov-report/**',
-            '!**/*.css',
-            '!**/*.scss',
-            '!**/*.less',
-            '!**/*.html',
-            '!**/*.json',
-            '!**/*.svg',
-            '!**/*.png',
-            '!**/*.jpg'
-        ],
+    collectCoverageFrom: ${patternsJson},
     coverageDirectory: '${coverageDir.replace(/\\/g, '/')}',
     coverageReporters: ['json-summary', 'json'],
-    // Disable coverage threshold and bail so failing tests never block coverage output
-    coverageThreshold: undefined
+    coverageThreshold: undefined,
+    coveragePathIgnorePatterns: [],
+    testPathIgnorePatterns: ['/node_modules/']
 };
 `;
-        fs.writeFileSync(tempConfigPath, `const fs = require('fs');\n${tempConfigContent}`, 'utf8');
-        console.log(`[CoverageRunner] Created temp config: ${tempConfigPath} using base: ${projectConfigPath}`);
+    fs.writeFileSync(tempConfigPath, tempConfigContent, 'utf8');
+    return tempConfigPath;
+}
 
-        // Run jest with the temporary config
-        // For small projects: --findRelatedTests with source files (runs only relevant tests)
-        // For large projects: pass test files directly as positional args (avoids running all project tests)
-        // Windows cmd line limit ~8191 chars; 150 source files is a safe ceiling for --findRelatedTests
-        const MAX_RELATED_FILES = 150;
-        const isLargeProject = sourceFiles.length > MAX_RELATED_FILES;
+/**
+ * Resolve local Jest binary for spawning.
+ * @param {string} projectRoot
+ * @returns {{ command: string, argsPrefix: string[], useNodeToExecute: boolean, jestBinPath: string }}
+ */
+function resolveJestBinary(projectRoot) {
+    let jestBinPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
+    let useNodeToExecute = false;
 
-        // Workers: limit to 2 for large projects to avoid OOM when instrumenting many files
-        const maxWorkers = isLargeProject ? '--maxWorkers=2' : '--maxWorkers=50%';
+    if (process.platform === 'win32') {
+        const jestCmd = path.join(projectRoot, 'node_modules', '.bin', 'jest.cmd');
+        const jestJs = path.join(projectRoot, 'node_modules', 'jest', 'bin', 'jest.js');
 
-        const normalizedConfigPath = tempConfigPath.split(path.sep).join('/');
-        const jestArgs = [
-            `--config=${normalizedConfigPath}`,
-            '--coverage',
-            '--passWithNoTests',
-            '--forceExit',
-            maxWorkers
-        ];
-
-        // Always pass target directory via --testPathPattern. This avoids issues with absolute paths 
-        // on Windows where drive letter casing (d:/ vs D:/) causes the Jest regex matcher to skip tests.
-        // It also mirrors the exact command line behavior users expect.
-        if (relativeToRoot) {
-            jestArgs.push(`--testPathPattern=${relativeToRoot}`);
-            console.log(`[CoverageRunner] Scoping tests via --testPathPattern=${relativeToRoot}`);
-        } else {
-            console.log(`[CoverageRunner] Analyzing project root, running all tests.`);
+        if (fs.existsSync(jestCmd)) {
+            jestBinPath = jestCmd;
+        } else if (fs.existsSync(jestJs)) {
+            jestBinPath = jestJs;
+            useNodeToExecute = true;
+        } else if (!fs.existsSync(jestBinPath)) {
+            jestBinPath = 'npx';
         }
+    } else if (!fs.existsSync(jestBinPath)) {
+        jestBinPath = 'npx';
+    }
 
-        console.log(`[CoverageRunner] Project Root: ${projectRoot}`);
-        console.log(`[CoverageRunner] Folder Path: ${folderPath}`);
-        console.log(`[CoverageRunner] Glob Pattern: ${globPattern}`);
-        console.log(`[CoverageRunner] Workers: ${maxWorkers}`);
-        if (useNodeToExecute) {
-            console.log(`[CoverageRunner] Using node to execute jest at: ${jestBinPath}`);
-        } else if (jestBinPath === 'npx') {
-            console.log(`[CoverageRunner] Using npx to execute jest`);
-        } else {
-            console.log(`[CoverageRunner] Using direct binary: ${jestBinPath}`);
+    if (jestBinPath !== 'npx') {
+        jestBinPath = jestBinPath.split(path.sep).join('/');
+    }
+
+    return { jestBinPath, useNodeToExecute };
+}
+
+/**
+ * Escape a path scope for Jest --testPathPattern (regex).
+ * @param {string} scope
+ * @returns {string}
+ */
+function escapeForJestTestPathPattern(scope) {
+    return String(scope || '')
+        .replace(/\\/g, '/')
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build --testPathPattern value for a coverage scope (same path as collectCoverageFrom).
+ * @param {string} scopeRelativeToRoot - e.g. "src/components/booking"
+ * @returns {string|null} Pattern string, or null when scope is empty (project-wide)
+ */
+function buildTestPathPattern(scopeRelativeToRoot) {
+    const scope = (scopeRelativeToRoot || '').replace(/\\/g, '/').trim();
+    if (!scope) return null;
+    return escapeForJestTestPathPattern(scope);
+}
+
+/**
+ * Build Jest CLI args for a scoped coverage run (mirrors folder-scoped npx jest CLI).
+ * @param {string} tempConfigPath
+ * @param {string} scopeRelativeToRoot
+ * @param {number} sourceFileCount - Files in the analyzed folder (for worker tuning)
+ * @param {boolean} isFullSrcBatch - Part of a multi-batch full-src run
+ * @returns {{ jestArgs: string[], testPathPattern: string|null }}
+ */
+function buildJestArgs(tempConfigPath, scopeRelativeToRoot, sourceFileCount, isFullSrcBatch) {
+    const normalizedConfigPath = tempConfigPath.split(path.sep).join('/');
+    const scope = (scopeRelativeToRoot || '').replace(/\\/g, '/');
+    const patterns = buildCollectCoverageFromPatterns(scope);
+    const testPathPattern = buildTestPathPattern(scope);
+
+    // Use moderate throttling for large folders — enough workers to run all tests without OOM
+    const throttleWorkers = sourceFileCount > MAX_SOURCE_FILES_THROTTLE && !isFullSrcBatch;
+    const maxWorkers = throttleWorkers ? '--maxWorkers=4' : '--maxWorkers=50%';
+
+    const jestArgs = [
+        `--config=${normalizedConfigPath}`,
+        '--coverage',
+        '--passWithNoTests',
+        '--watchAll=false',
+        '--forceExit',
+        '--no-cache',
+        maxWorkers
+    ];
+
+    if (testPathPattern) {
+        jestArgs.push(`--testPathPattern=${testPathPattern}`);
+    }
+
+    for (const pattern of patterns) {
+        jestArgs.push(`--collectCoverageFrom=${pattern}`);
+    }
+
+    return { jestArgs, testPathPattern };
+}
+
+/**
+ * Run Jest once for a coverage scope.
+ * @param {object} opts
+ * @returns {Promise<{ code: number, stdout: string, stderr: string, coverageDir: string }>}
+ */
+function runJestOnce(opts) {
+    const {
+        projectRoot,
+        scopeRelativeToRoot,
+        sourceFileCount,
+        configSuffix,
+        isFullSrcBatch
+    } = opts;
+
+    const scope = (scopeRelativeToRoot || '').replace(/\\/g, '/');
+    const coverageDir = path.join(
+        projectRoot,
+        'coverage_temp',
+        scope ? scope.replace(/\//g, '_') : 'root'
+    );
+
+    if (fs.existsSync(coverageDir)) {
+        try {
+            fs.rmSync(coverageDir, { recursive: true, force: true });
+        } catch {
+            // ignore
         }
+    }
+    fs.mkdirSync(coverageDir, { recursive: true });
 
-        const command = useNodeToExecute ? 'node' : jestBinPath;
-        const spawnArgs = useNodeToExecute ? [jestBinPath, ...jestArgs] :
-            (jestBinPath === 'npx' ? ['jest', ...jestArgs] : jestArgs);
+    const tempConfigPath = writeTempJestConfig(projectRoot, scope, coverageDir, configSuffix);
+    const { jestBinPath, useNodeToExecute } = resolveJestBinary(projectRoot);
+    const { jestArgs, testPathPattern } = buildJestArgs(tempConfigPath, scope, sourceFileCount, isFullSrcBatch);
 
-        console.log(`[CoverageRunner] Executing: ${command} ${spawnArgs.slice(0, 6).join(' ')}...`);
+    const command = useNodeToExecute ? 'node' : jestBinPath;
+    const spawnArgs = useNodeToExecute
+        ? [jestBinPath, ...jestArgs]
+        : jestBinPath === 'npx'
+            ? ['jest', ...jestArgs]
+            : jestArgs;
 
-        console.log(`[CoverageRunner] Using local jest binary`);
+    const jestCommandPreview = `${command} ${spawnArgs.join(' ')}`.slice(0, 200);
 
+    console.log(
+        `[CoverageRunner] Executing scope="${scope || '(root)'}"` +
+        (testPathPattern ? ` testPathPattern="${testPathPattern}"` : '') +
+        ` : ${command} ${jestArgs.slice(0, 6).join(' ')}...`
+    );
+
+    return new Promise((resolve) => {
         const jest = spawn(command, spawnArgs, {
             cwd: projectRoot,
             shell: true,
@@ -502,162 +456,384 @@ module.exports = {
         });
 
         jest.on('close', (code, signal) => {
-            console.log(`[CoverageRunner] Jest exited with code=${code} signal=${signal}`);
-
-            // Clean up temporary config file
             try {
                 if (fs.existsSync(tempConfigPath)) {
                     fs.unlinkSync(tempConfigPath);
-                    console.log(`[CoverageRunner] Cleaned up temp config`);
                 }
-            } catch (cleanupErr) {
-                console.warn(`[CoverageRunner] Failed to clean up temp config: ${cleanupErr.message}`);
+                const logPath = path.join(coverageDir, 'jest-execution.log');
+                fs.writeFileSync(logPath, `Exit Code: ${code}\nSignal: ${signal}\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`, 'utf8');
+                console.log(`[CoverageRunner] Saved jest logs to ${logPath}`);
+            } catch (err) {
+                console.warn(`[CoverageRunner] Failed to write jest-execution.log: ${err.message}`);
             }
-
-            // Try to read coverage summary
-            const coverageSummaryPath = path.join(coverageDir, 'coverage-summary.json');
-
-            try {
-                if (fs.existsSync(coverageSummaryPath)) {
-                    const fullSummary = JSON.parse(fs.readFileSync(coverageSummaryPath, 'utf8'));
-                    const summary = fullSummary.total;
-
-                    // Persist Super Dashboard totals next to the analyzed folder (survives closing the app)
-                    if (summary && typeof summary === 'object') {
-                        writeSuperDashboardJestSummary(folderPath, null, projectRoot, {
-                            reportSource: 'code-analysis',
-                            totalTests: 0,
-                            passedTests: 0,
-                            failedTests: 0,
-                            testSuites: 0,
-                            success: code === 0,
-                            exitCode: typeof code === 'number' ? code : -1,
-                            coverage: { total: summary }
-                        });
-                    }
-
-                    // Get realpath of folderPath for robust matching
-                    let realFolderPath = folderPath;
-                    try {
-                        realFolderPath = fs.realpathSync(folderPath);
-                    } catch (e) {
-                        console.warn(`[CoverageRunner] Failed to get realpath for folderPath: ${folderPath}`);
-                    }
-                    const normalizedFolderPath = realFolderPath.toLowerCase().replace(/\\/g, '/');
-
-                    // Debug: Log actual coverage paths
-                    const files = [];
-                    const coverageKeys = Object.keys(fullSummary).filter(k => k !== 'total');
-                    console.log(`[CoverageRunner] DEBUG - Coverage file count: ${coverageKeys.length}`);
-                    console.log(`[CoverageRunner] DEBUG - Looking for folder: ${normalizedFolderPath}`);
-
-                    for (const [filePath, fileData] of Object.entries(fullSummary)) {
-                        if (filePath === 'total') continue;
-
-                        // Get realpath of individual file for comparison
-                        let realFilePath = filePath;
-                        try {
-                            realFilePath = fs.realpathSync(filePath);
-                        } catch (e) {
-                            // keep original path if realpath fails
-                        }
-
-                        // Normalize the coverage file path for comparison
-                        const normalizedFilePath = realFilePath.toLowerCase().replace(/\\/g, '/');
-
-                        // Check if this file is inside our analyzed folder using normalized paths
-                        if (!normalizedFilePath.startsWith(normalizedFolderPath) && !normalizedFilePath.includes(normalizedFolderPath)) {
-                            continue;
-                        }
-
-                        // Calculate relative path using original filePath for display
-                        // Use forward slashes for cross-platform consistency in mapping
-                        const relativePath = path.relative(folderPath, filePath).split(path.sep).join('/');
-
-                        files.push({
-                            filePath,
-                            relativePath,
-                            fileName: path.basename(filePath),
-                            lines: fileData.lines,
-                            statements: fileData.statements,
-                            // We still need detailed JSON for missing lines
-                            missingLines: []
-                        });
-                    }
-
-                    // Try to augment with missing lines from detailed JSON if it exists
-                    const coverageJsonPath = path.join(coverageDir, 'coverage-final.json');
-                    if (fs.existsSync(coverageJsonPath)) {
-                        const detailed = JSON.parse(fs.readFileSync(coverageJsonPath, 'utf8'));
-                        files.forEach(file => {
-                            const detailedData = detailed[file.filePath];
-                            if (detailedData) {
-                                file.missingLines = getMissingLines(detailedData);
-                            }
-                        });
-                    }
-
-                    console.log(`[CoverageRunner] Matched ${files.length} files within the selected folder.`);
-
-                    resolve({
-                        success: true,
-                        hasCoverage: true,
-                        files,
-                        summary: summary,
-                        rawOutput: stdout,
-                        message: files.length === 0 ? `No coverage match found for files in: ${folderPath}` : ''
-                    });
-                } else {
-                    console.warn(`[CoverageRunner] No coverage-summary.json found at: ${coverageSummaryPath}`);
-                    console.warn(`[CoverageRunner] Jest exit code: ${code}`);
-                    if (stderr) console.warn(`[CoverageRunner] Jest stderr:\n${stderr.slice(0, 2000)}`);
-                    if (stdout) console.log(`[CoverageRunner] Jest stdout:\n${stdout.slice(0, 2000)}`);
-                    resolve({
-                        success: true,
-                        hasCoverage: false,
-                        message: 'No coverage data generated',
-                        files: [],
-                        summary: {
-                            lines: { total: 0, covered: 0, pct: 0 },
-                            statements: { total: 0, covered: 0, pct: 0 },
-                            functions: { total: 0, covered: 0, pct: 0 },
-                            branches: { total: 0, covered: 0, pct: 0 }
-                        },
-                        rawOutput: stdout,
-                        errorOutput: stderr
-                    });
-                }
-            } catch (error) {
-                resolve({
-                    success: false,
-                    hasCoverage: false,
-                    error: error.message,
-                    files: [],
-                    summary: {
-                        lines: { total: 0, covered: 0, pct: 0 },
-                        statements: { total: 0, covered: 0, pct: 0 },
-                        functions: { total: 0, covered: 0, pct: 0 },
-                        branches: { total: 0, covered: 0, pct: 0 }
-                    }
-                });
-            }
+            console.log(`[CoverageRunner] Scope "${scope}" exited code=${code} signal=${signal}`);
+            resolve({
+                code,
+                stdout,
+                stderr,
+                coverageDir,
+                testPathPattern,
+                jestCommandPreview
+            });
         });
 
         jest.on('error', (error) => {
-            resolve({
-                success: false,
-                hasCoverage: false,
-                error: error.message,
-                files: [],
-                summary: {
-                    lines: { total: 0, covered: 0, pct: 0 },
-                    statements: { total: 0, covered: 0, pct: 0 },
-                    functions: { total: 0, covered: 0, pct: 0 },
-                    branches: { total: 0, covered: 0, pct: 0 }
+            try {
+                if (fs.existsSync(tempConfigPath)) {
+                    fs.unlinkSync(tempConfigPath);
                 }
+                const logPath = path.join(coverageDir, 'jest-execution.log');
+                fs.writeFileSync(logPath, `Error: ${error.message}\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`, 'utf8');
+                console.log(`[CoverageRunner] Saved jest error logs to ${logPath}`);
+            } catch (err) {
+                console.warn(`[CoverageRunner] Failed to write jest-execution.log: ${err.message}`);
+            }
+            resolve({
+                code: -1,
+                stdout,
+                stderr: error.message,
+                coverageDir,
+                testPathPattern,
+                jestCommandPreview
             });
         });
     });
+}
+
+/**
+ * Sum istanbul metric objects { total, covered, pct }.
+ * @param {object[]} metrics
+ * @returns {{ total: number, covered: number, pct: number }}
+ */
+function sumMetric(metrics) {
+    const total = metrics.reduce((s, m) => s + (m?.total || 0), 0);
+    const covered = metrics.reduce((s, m) => s + (m?.covered || 0), 0);
+    const pct = total > 0 ? (covered / total) * 100 : 0;
+    return { total, covered, pct };
+}
+
+/**
+ * Prefer the coverage entry with more covered lines (for duplicate keys across batches).
+ * @param {object} a
+ * @param {object} b
+ * @returns {object}
+ */
+function pickBetterCoverageSummaryEntry(a, b) {
+    const coveredA = a?.lines?.covered ?? 0;
+    const coveredB = b?.lines?.covered ?? 0;
+    return coveredB > coveredA ? b : a;
+}
+
+/**
+ * Count executed statements in istanbul file data.
+ * @param {object} fileData
+ * @returns {number}
+ */
+function countCoveredStatements(fileData) {
+    if (!fileData?.s) return 0;
+    return Object.values(fileData.s).filter((v) => v > 0).length;
+}
+
+/**
+ * Merge multiple coverage-summary.json payloads into one.
+ * @param {object[]} summaries
+ * @returns {object}
+ */
+function mergeCoverageSummaries(summaries) {
+    const merged = {};
+    for (const summary of summaries) {
+        for (const [key, data] of Object.entries(summary)) {
+            if (key === 'total') continue;
+            merged[key] = merged[key]
+                ? pickBetterCoverageSummaryEntry(merged[key], data)
+                : data;
+        }
+    }
+
+    const fileEntries = Object.values(merged);
+    merged.total = {
+        lines: sumMetric(fileEntries.map((f) => f.lines)),
+        statements: sumMetric(fileEntries.map((f) => f.statements)),
+        functions: sumMetric(fileEntries.map((f) => f.functions)),
+        branches: sumMetric(fileEntries.map((f) => f.branches))
+    };
+
+    return merged;
+}
+
+/**
+ * Merge coverage-final.json objects by file path key.
+ * @param {object[]} detailedList
+ * @returns {object}
+ */
+function mergeCoverageFinal(detailedList) {
+    const merged = {};
+    for (const detailed of detailedList) {
+        for (const [key, data] of Object.entries(detailed)) {
+            const existing = merged[key];
+            if (!existing) {
+                merged[key] = data;
+                continue;
+            }
+            if (countCoveredStatements(data) > countCoveredStatements(existing)) {
+                merged[key] = data;
+            }
+        }
+    }
+    return merged;
+}
+
+/**
+ * Parse Jest coverage output into app file list + summary.
+ * @param {object} fullSummary - Merged coverage-summary
+ * @param {object} detailed - Merged coverage-final
+ * @param {string} folderPath - User-selected folder
+ * @param {string} projectRoot - Jest project root
+ * @returns {{ files: object[], summary: object, diagnostics: object }}
+ */
+function parseCoverageResults(fullSummary, detailed, folderPath, projectRoot) {
+    const files = [];
+    const coverageKeys = Object.keys(fullSummary).filter((k) => k !== 'total');
+    const skippedKeys = [];
+
+    for (const [filePath, fileData] of Object.entries(fullSummary)) {
+        if (filePath === 'total') continue;
+
+        if (!isFileUnderFolder(folderPath, filePath, projectRoot)) {
+            skippedKeys.push(filePath);
+            continue;
+        }
+
+        const relativePath = toDisplayRelativePath(folderPath, filePath, projectRoot);
+        const entry = {
+            filePath,
+            relativePath,
+            relativePathKey: normalizeRelativeKey(relativePath),
+            fileName: path.basename(filePath),
+            lines: fileData.lines,
+            statements: fileData.statements,
+            missingLines: []
+        };
+
+        const detailedKey = Object.keys(detailed).find(
+            (k) =>
+                k === filePath ||
+                canonicalPathKey(k) === canonicalPathKey(filePath) ||
+                normalizeRelativeKey(k) === normalizeRelativeKey(filePath)
+        );
+        if (detailedKey && detailed[detailedKey]) {
+            entry.missingLines = getMissingLines(detailed[detailedKey]);
+        }
+
+        files.push(entry);
+    }
+
+    return {
+        files,
+        summary: fullSummary.total,
+        diagnostics: {
+            jestCoverageKeyCount: coverageKeys.length,
+            matchedFileCount: files.length,
+            skippedKeyCount: skippedKeys.length,
+            sampleSkippedKeys: skippedKeys.slice(0, 5)
+        }
+    };
+}
+
+/**
+ * Ensure npm dependencies are installed at project root.
+ * @param {string} projectRoot
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+async function ensureNodeModules(projectRoot) {
+    const nodeModulesPath = path.join(projectRoot, 'node_modules');
+    if (fs.existsSync(nodeModulesPath)) {
+        return { ok: true };
+    }
+
+    console.log(`[CoverageRunner] node_modules not found, running npm install --legacy-peer-deps...`);
+    const { spawnSync } = require('child_process');
+    const installResult = spawnSync('npm', ['install', '--legacy-peer-deps'], {
+        cwd: projectRoot,
+        shell: true,
+        stdio: 'inherit',
+        env: { ...process.env }
+    });
+
+    if (installResult.status !== 0) {
+        return { ok: false, error: 'npm install --legacy-peer-deps failed. Check the project for dependency issues.' };
+    }
+    return { ok: true };
+}
+
+/**
+ * Run Jest with coverage on a folder
+ * @param {string} folderPath - Path to the folder containing cases/files to analyze
+ * @returns {Promise<object>} - Coverage results
+ */
+async function runCoverage(folderPath) {
+    let projectRoot = findTestRoot(folderPath);
+
+    if (projectRoot) {
+        console.log(`[CoverageRunner] Found test root at: ${projectRoot}`);
+    } else {
+        projectRoot = findNearestPackageRoot(folderPath);
+    }
+
+    if (!projectRoot) {
+        return {
+            success: true,
+            hasCoverage: false,
+            message: 'No package.json found in or above the selected folder.',
+            files: [],
+            summary: emptyCoverageSummary(),
+            diagnostics: {}
+        };
+    }
+
+    const install = await ensureNodeModules(projectRoot);
+    if (!install.ok) {
+        return {
+            success: false,
+            hasCoverage: false,
+            error: install.error,
+            files: [],
+            summary: emptyCoverageSummary(),
+            diagnostics: {}
+        };
+    }
+
+    const targetAnalysisPath = resolveTargetAnalysisPath(folderPath, projectRoot);
+    const jestCoverageScope = resolveJestCoverageScope(projectRoot, targetAnalysisPath);
+
+    const sourceFiles = getSourceFilesInFolder(targetAnalysisPath);
+    const scopes = getBatchScopes(projectRoot, targetAnalysisPath, sourceFiles.length);
+    const isBatched = scopes.length > 1;
+
+    console.log(`[CoverageRunner] Project root: ${projectRoot}`);
+    console.log(`[CoverageRunner] Folder path: ${folderPath}`);
+    console.log(`[CoverageRunner] Target: ${targetAnalysisPath} (${sourceFiles.length} source files)`);
+    console.log(`[CoverageRunner] Jest coverage scope: ${jestCoverageScope}`);
+    console.log(`[CoverageRunner] Scopes: ${scopes.join(', ')}`);
+
+    const summaryParts = [];
+    const detailedParts = [];
+    let combinedStdout = '';
+    let combinedStderr = '';
+    let lastExitCode = 0;
+    const batchTestPathPatterns = [];
+    let jestCommandPreview = '';
+
+    for (let i = 0; i < scopes.length; i++) {
+        const scope = scopes[i];
+        const result = await runJestOnce({
+            projectRoot,
+            scopeRelativeToRoot: scope,
+            sourceFileCount: sourceFiles.length,
+            configSuffix: isBatched ? `-batch-${i}` : '',
+            isFullSrcBatch: isBatched
+        });
+
+        if (result.testPathPattern) {
+            batchTestPathPatterns.push({ scope, pattern: result.testPathPattern });
+        }
+        if (result.jestCommandPreview) {
+            jestCommandPreview = result.jestCommandPreview;
+        }
+
+        combinedStdout += result.stdout;
+        combinedStderr += result.stderr;
+        if (result.code !== 0) {
+            lastExitCode = result.code;
+        }
+
+        const summaryPath = path.join(result.coverageDir, 'coverage-summary.json');
+        const finalPath = path.join(result.coverageDir, 'coverage-final.json');
+
+        if (fs.existsSync(summaryPath)) {
+            summaryParts.push(JSON.parse(fs.readFileSync(summaryPath, 'utf8')));
+        } else {
+            console.warn(`[CoverageRunner] No coverage-summary.json for scope "${scope}"`);
+        }
+
+        if (fs.existsSync(finalPath)) {
+            detailedParts.push(JSON.parse(fs.readFileSync(finalPath, 'utf8')));
+        }
+    }
+
+    if (summaryParts.length === 0) {
+        return {
+            success: true,
+            hasCoverage: false,
+            message: 'No coverage data generated',
+            files: [],
+            summary: emptyCoverageSummary(),
+            rawOutput: combinedStdout,
+            errorOutput: combinedStderr,
+            diagnostics: { sourceFileCount: sourceFiles.length, batchCount: scopes.length }
+        };
+    }
+
+    const fullSummary = mergeCoverageSummaries(summaryParts);
+    const detailed = mergeCoverageFinal(detailedParts);
+    const parsed = parseCoverageResults(fullSummary, detailed, folderPath, projectRoot);
+    const jestRun = parseJestOutput(combinedStdout + '\n' + combinedStderr);
+
+    console.log(
+        `[CoverageRunner] Diagnostics: jest keys=${parsed.diagnostics.jestCoverageKeyCount}, ` +
+        `matched=${parsed.diagnostics.matchedFileCount}, skipped=${parsed.diagnostics.skippedKeyCount}, ` +
+        `tests=${jestRun.passedTests}/${jestRun.totalTests}`
+    );
+    if (parsed.diagnostics.sampleSkippedKeys?.length) {
+        console.log(`[CoverageRunner] Sample skipped keys:`, parsed.diagnostics.sampleSkippedKeys);
+    }
+
+    if (fullSummary.total && typeof fullSummary.total === 'object') {
+        writeSuperDashboardJestSummary(folderPath, null, projectRoot, {
+            reportSource: 'code-analysis',
+            totalTests: jestRun.totalTests,
+            passedTests: jestRun.passedTests,
+            failedTests: jestRun.failedTests,
+            testSuites: jestRun.testSuites,
+            success: lastExitCode === 0,
+            exitCode: lastExitCode,
+            coverage: { total: fullSummary.total }
+        });
+    }
+
+    return {
+        success: true,
+        hasCoverage: true,
+        files: parsed.files,
+        summary: parsed.summary,
+        rawOutput: combinedStdout,
+        totalTests: jestRun.totalTests,
+        passedTests: jestRun.passedTests,
+        failedTests: jestRun.failedTests,
+        testSuites: jestRun.testSuites,
+        diagnostics: {
+            ...parsed.diagnostics,
+            sourceFileCount: sourceFiles.length,
+            batchCount: scopes.length,
+            scopesRun: scopes,
+            analysisFolder: folderPath,
+            jestMessage: jestRun.message,
+            testPathPatterns: batchTestPathPatterns,
+            jestCommandPreview
+        },
+        message: parsed.files.length === 0
+            ? `No coverage match found for files in: ${folderPath}`
+            : ''
+    };
+}
+
+function emptyCoverageSummary() {
+    return {
+        lines: { total: 0, covered: 0, pct: 0 },
+        statements: { total: 0, covered: 0, pct: 0 },
+        functions: { total: 0, covered: 0, pct: 0 },
+        branches: { total: 0, covered: 0, pct: 0 }
+    };
 }
 
 /**
@@ -718,5 +894,15 @@ module.exports = {
     findJestProjectRoot,
     isJestProjectDirectory,
     packageJsonDeclaresJest,
-    findNearestJestConfig
+    findNearestJestConfig,
+    getBatchScopes,
+    mergeCoverageSummaries,
+    mergeCoverageFinal,
+    pickBetterCoverageSummaryEntry,
+    parseCoverageResults,
+    buildJestArgs,
+    buildTestPathPattern,
+    escapeForJestTestPathPattern,
+    isFileUnderFolder,
+    getSourceFilesInFolder
 };

@@ -258,14 +258,8 @@ function getJsFiles(folderPath, basePath = folderPath) {
  * @returns {object} - Analysis results with file details and summary
  */
 async function analyzeFolder(folderPath) {
-    let targetPath = folderPath;
-
-    // Auto-detect src folder for better defaults if analyzing project root
-    const srcPath = path.join(folderPath, 'src');
-    if (fs.existsSync(srcPath) && fs.statSync(srcPath).isDirectory()) {
-        console.log(`[CodeAnalyzer] src directory detected, analyzing: ${srcPath}`);
-        targetPath = srcPath;
-    }
+    const { resolveAnalyzerTargetPath } = require('../utils/sourceRoot');
+    const targetPath = resolveAnalyzerTargetPath(folderPath);
 
     const files = getJsFiles(targetPath);
     const results = [];

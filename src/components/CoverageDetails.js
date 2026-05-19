@@ -1,4 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import {
+    mergeAnalysisWithCoverage,
+    countUnmatchedAnalysisFiles,
+    recomputeSummaryFromMergedFiles
+} from '../utils/coverageMerge';
+import { resolveAnalysisFileAbsolute, TEST_SUFFIXES } from '../utils/coverageTestDiscovery';
 
 function CoverageDetails({ coverageResults, analysisResults, folderPath, executionTime, branch }) {
     const [sortKey, setSortKey] = useState('lineCoverage');
@@ -47,36 +53,115 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
         return { label: 'Low', cls: 'badge-low' };
     };
 
-    // Summary from coverage
-    const summary = coverageResults?.summary || {};
-    const lineCoverage = summary.lines?.pct ?? null;
-    const statementCoverage = summary.statements?.pct ?? null;
-    const coveredLines = summary.lines?.covered ?? null;
-    const totalLines = summary.lines?.total ?? null;
-    const coveredStatements = summary.statements?.covered ?? null;
-    const totalStatements = summary.statements?.total ?? null;
+    const baseFiles = useMemo(
+        () => mergeAnalysisWithCoverage(analysisResults?.files, coverageResults?.files),
+        [analysisResults, coverageResults]
+    );
 
-    // Build merged file list from analysisResults + coverageResults
-    const files = useMemo(() => {
-        if (!analysisResults?.files) return [];
-        const coverageMap = new Map();
-        if (coverageResults?.files) {
-            coverageResults.files.forEach(f => coverageMap.set(f.relativePath, f));
+    const [colocatedHints, setColocatedHints] = useState({});
+
+    useEffect(() => {
+        if (!folderPath || !baseFiles.length) {
+            setColocatedHints({});
+            return undefined;
         }
-        return analysisResults.files.map(f => {
-            const cov = coverageMap.get(f.relativePath);
+
+        const fileExists = window.electronAPI?.fileExists;
+        if (!fileExists) {
+            setColocatedHints({});
+            return undefined;
+        }
+
+        let cancelled = false;
+
+        (async () => {
+            const next = {};
+            for (const f of baseFiles) {
+                if (cancelled) break;
+                const absPath = resolveAnalysisFileAbsolute(folderPath, f.relativePath);
+                if (!absPath) continue;
+
+                const candidates = [];
+                const segments = absPath.split(/[/\\]/).filter(Boolean);
+                const fileName = segments[segments.length - 1];
+                const dirParts = segments.slice(0, -1);
+                const dot = fileName.lastIndexOf('.');
+                const base = dot > 0 ? fileName.slice(0, dot) : fileName;
+                const sep = absPath.includes('\\') ? '\\' : '/';
+
+                for (const suffix of TEST_SUFFIXES) {
+                    candidates.push(
+                        [...dirParts, '__tests__', base + suffix].join(sep),
+                        [...dirParts, base + suffix].join(sep)
+                    );
+                }
+
+                for (const candidate of candidates) {
+                    // eslint-disable-next-line no-await-in-loop
+                    if (await fileExists(candidate)) {
+                        next[f.relativePath] = true;
+                        break;
+                    }
+                }
+            }
+            if (!cancelled) setColocatedHints(next);
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [baseFiles, folderPath]);
+
+    const files = useMemo(() => {
+        return baseFiles.map((f) => {
+            const hasColocatedTest = colocatedHints[f.relativePath] === true;
+            const zeroCoverageWithTest =
+                hasColocatedTest &&
+                f.lineCoverage != null &&
+                Number(f.lineCoverage) === 0;
+
             return {
-                relativePath: f.relativePath,
-                lineCoverage: cov?.lines?.pct ?? null,
-                coveredLines: cov?.lines?.covered ?? null,
-                totalLines: cov?.lines?.total ?? null,
-                statementCoverage: cov?.statements?.pct ?? null,
-                coveredStatements: cov?.statements?.covered ?? null,
-                totalStatements: cov?.statements?.total ?? null,
-                missingLines: cov ? (cov.missingLines || []) : null,
+                ...f,
+                hasColocatedTest,
+                zeroCoverageWithTest
             };
         });
-    }, [analysisResults, coverageResults]);
+    }, [baseFiles, colocatedHints]);
+
+    const totalTests = coverageResults?.totalTests ?? 0;
+    const passedTests = coverageResults?.passedTests ?? 0;
+    const failedTests = coverageResults?.failedTests ?? 0;
+    const zeroCoverageWithTestCount = useMemo(
+        () => files.filter((f) => f.zeroCoverageWithTest).length,
+        [files]
+    );
+
+    const unmatchedCount = useMemo(
+        () => countUnmatchedAnalysisFiles(analysisResults?.files, coverageResults?.files),
+        [analysisResults, coverageResults]
+    );
+
+    const displaySummary = useMemo(() => {
+        const jestSummary = coverageResults?.summary || {};
+        if (unmatchedCount > 0 && files.length > 0) {
+            const fromMerged = recomputeSummaryFromMergedFiles(files);
+            if (fromMerged) {
+                return {
+                    ...jestSummary,
+                    lines: fromMerged.lines,
+                    statements: fromMerged.statements
+                };
+            }
+        }
+        return jestSummary;
+    }, [coverageResults, unmatchedCount, files]);
+
+    const lineCoverage = displaySummary.lines?.pct ?? null;
+    const statementCoverage = displaySummary.statements?.pct ?? null;
+    const coveredLines = displaySummary.lines?.covered ?? null;
+    const totalLines = displaySummary.lines?.total ?? null;
+    const coveredStatements = displaySummary.statements?.covered ?? null;
+    const totalStatements = displaySummary.statements?.total ?? null;
 
     const filteredFiles = useMemo(() => {
         if (!filterText) return files;
@@ -234,6 +319,76 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
                 </div>
             ) : (
                 <>
+                    {(totalTests > 0 || failedTests > 0) && (
+                        <div
+                            className={`push-status-banner fade-in ${failedTests > 0 ? 'push-status-error' : 'push-status-pushed'}`}
+                            style={{ marginBottom: '16px' }}
+                        >
+                            <strong>Jest:</strong>{' '}
+                            {passedTests}/{totalTests} tests passed
+                            {failedTests > 0 && <span> · {failedTests} failed</span>}
+                            {coverageResults?.diagnostics?.batchCount > 1 && (
+                                <span> · {coverageResults.diagnostics.batchCount} coverage batches</span>
+                            )}
+                            {coverageResults?.diagnostics?.testPathPatterns?.length > 0 && (
+                                <span style={{ display: 'block', marginTop: '6px', fontSize: '12px', opacity: 0.9 }}>
+                                    testPathPattern:{' '}
+                                    {coverageResults.diagnostics.testPathPatterns
+                                        .map((entry) => entry.pattern)
+                                        .join(', ')}
+                                </span>
+                            )}
+                            {coverageResults?.diagnostics?.jestCommandPreview && (
+                                <span
+                                    style={{ display: 'block', marginTop: '4px', fontSize: '11px', opacity: 0.75 }}
+                                    title={coverageResults.diagnostics.jestCommandPreview}
+                                >
+                                    {coverageResults.diagnostics.jestCommandPreview}
+                                </span>
+                            )}
+                            {coverageResults?.diagnostics?.jestMessage && (
+                                <span style={{ display: 'block', marginTop: '6px', fontSize: '12px', opacity: 0.9 }}>
+                                    {coverageResults.diagnostics.jestMessage}
+                                </span>
+                            )}
+                        </div>
+                    )}
+
+                    {hasCoverage && totalTests === 0 && (
+                        <div
+                            className="push-status-banner push-status-error fade-in"
+                            style={{ marginBottom: '16px' }}
+                        >
+                            <strong>No tests executed.</strong> Coverage may reflect instrumented files only (0% does not
+                            always mean a test file is missing).
+                        </div>
+                    )}
+
+                    {zeroCoverageWithTestCount > 0 && (
+                        <div
+                            className="push-status-banner push-status-error fade-in"
+                            style={{ marginBottom: '16px' }}
+                        >
+                            <strong>{zeroCoverageWithTestCount}</strong> file
+                            {zeroCoverageWithTestCount === 1 ? '' : 's'} have a colocated test but 0% coverage — the suite
+                            may not have run, or the module was mocked.
+                        </div>
+                    )}
+
+                    {unmatchedCount > 0 && (
+                        <div
+                            className="push-status-banner push-status-error fade-in"
+                            style={{ marginBottom: '16px' }}
+                        >
+                            <strong>{unmatchedCount}</strong> analyzed file
+                            {unmatchedCount === 1 ? '' : 's'} had no matching Jest coverage row
+                            (shown as &quot;No coverage data&quot;). Totals below are based on matched files only.
+                            {coverageResults?.diagnostics?.batchCount > 1 && (
+                                <span> Ran {coverageResults.diagnostics.batchCount} coverage batches.</span>
+                            )}
+                        </div>
+                    )}
+
                     {/* Total Coverage Summary */}
                     <div className="cd-section-title">Total Coverage</div>
                     <div className="summary-grid" style={{ marginBottom: 'var(--spacing-xl)' }}>
@@ -322,6 +477,15 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
                                             <tr key={idx}>
                                                 <td>
                                                     <span className="file-name">{file.relativePath}</span>
+                                                    {file.zeroCoverageWithTest && (
+                                                        <div
+                                                            className="cd-no-coverage"
+                                                            style={{ color: 'var(--warning)', fontSize: '11px', marginTop: '4px' }}
+                                                            title="Colocated test exists but module was not executed"
+                                                        >
+                                                            Test exists — 0% (not executed or mocked)
+                                                        </div>
+                                                    )}
                                                 </td>
                                                 <td className="coverage-cell" style={{ textAlign: 'right' }}>
                                                     <span className={`coverage-${getCoverageClass(file.lineCoverage) || 'low'}`}>

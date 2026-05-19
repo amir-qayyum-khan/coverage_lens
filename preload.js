@@ -81,5 +81,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Open a detached window for a specific project's progress/details
     openDetachedWindow: (app, branch, targetDir) =>
-        ipcRenderer.invoke('app:openDetachedWindow', { app, branch, targetDir })
+        ipcRenderer.invoke('app:openDetachedWindow', { app, branch, targetDir }),
+
+    fileExists: (filePath) => ipcRenderer.invoke('fs:exists', filePath)
 });

@@ -1,0 +1,129 @@
+/**
+ * Normalize a relative path key for Map lookups (forward slashes, lowercase, no leading ./).
+ * @param {string} p
+ * @returns {string}
+ */
+function normalizeRelativeKey(p) {
+    return String(p || '')
+        .replace(/\\/g, '/')
+        .replace(/^\.\//, '')
+        .toLowerCase();
+}
+
+/**
+ * Collapse CoreUI-style `source/src/...` and CRA-style `src/...` to a common key.
+ * @param {string} p
+ * @returns {string}
+ */
+function canonicalPathKey(p) {
+    let key = normalizeRelativeKey(p);
+    if (key.startsWith('source/src/')) {
+        key = key.slice('source/'.length);
+    } else if (key === 'source/src') {
+        key = 'src';
+    } else if (key.startsWith('source/')) {
+        key = key.slice('source/'.length);
+    }
+    return key;
+}
+
+/**
+ * Find coverage entry for an analysis file path (exact key, then suffix fallback).
+ * @param {Array<{ relativePath: string, relativePathKey?: string }>} coverageFiles
+ * @param {string} analysisRelativePath
+ * @returns {object|undefined}
+ */
+function lookupCoverageForAnalysis(coverageFiles, analysisRelativePath) {
+    if (!coverageFiles?.length) return undefined;
+
+    const norm = canonicalPathKey(analysisRelativePath);
+    const indexed = coverageFiles.map((f) => ({
+        file: f,
+        norm: canonicalPathKey(f.relativePathKey || f.relativePath)
+    }));
+
+    const exact = indexed.find((e) => e.norm === norm);
+    if (exact) return exact.file;
+
+    for (const entry of indexed) {
+        if (norm.endsWith('/' + entry.norm) || entry.norm.endsWith('/' + norm)) {
+            return entry.file;
+        }
+    }
+
+    return undefined;
+}
+
+/**
+ * Merge analysis file rows with Jest coverage rows.
+ * @param {Array<{ relativePath: string }>} analysisFiles
+ * @param {Array<object>|null|undefined} coverageFiles
+ * @returns {Array<object>}
+ */
+function mergeAnalysisWithCoverage(analysisFiles, coverageFiles) {
+    if (!analysisFiles?.length) return [];
+
+    return analysisFiles.map((f) => {
+        const cov = lookupCoverageForAnalysis(coverageFiles, f.relativePath);
+        return {
+            relativePath: f.relativePath,
+            lineCoverage: cov?.lines?.pct ?? null,
+            coveredLines: cov?.lines?.covered ?? null,
+            totalLines: cov?.lines?.total ?? null,
+            statementCoverage: cov?.statements?.pct ?? null,
+            coveredStatements: cov?.statements?.covered ?? null,
+            totalStatements: cov?.statements?.total ?? null,
+            missingLines: cov ? (cov.missingLines || []) : null
+        };
+    });
+}
+
+/**
+ * Count analysis files with no matching Jest coverage row.
+ * @param {Array<{ relativePath: string }>} analysisFiles
+ * @param {Array<object>|null|undefined} coverageFiles
+ * @returns {number}
+ */
+function countUnmatchedAnalysisFiles(analysisFiles, coverageFiles) {
+    if (!analysisFiles?.length) return 0;
+    return analysisFiles.filter(
+        (f) => !lookupCoverageForAnalysis(coverageFiles, f.relativePath)
+    ).length;
+}
+
+/**
+ * Recompute line/statement totals from merged rows that have Jest data.
+ * @param {Array<{ lineCoverage: number|null, coveredLines: number|null, totalLines: number|null, statementCoverage: number|null, coveredStatements: number|null, totalStatements: number|null }>} mergedFiles
+ * @returns {{ lines: { total: number, covered: number, pct: number }, statements: { total: number, covered: number, pct: number } }|null}
+ */
+function recomputeSummaryFromMergedFiles(mergedFiles) {
+    const withData = mergedFiles.filter((f) => f.lineCoverage != null && f.totalLines != null);
+    if (withData.length === 0) return null;
+
+    const linesTotal = withData.reduce((s, f) => s + (f.totalLines || 0), 0);
+    const linesCovered = withData.reduce((s, f) => s + (f.coveredLines || 0), 0);
+    const stmtTotal = withData.reduce((s, f) => s + (f.totalStatements || 0), 0);
+    const stmtCovered = withData.reduce((s, f) => s + (f.coveredStatements || 0), 0);
+
+    return {
+        lines: {
+            total: linesTotal,
+            covered: linesCovered,
+            pct: linesTotal > 0 ? (linesCovered / linesTotal) * 100 : 0
+        },
+        statements: {
+            total: stmtTotal,
+            covered: stmtCovered,
+            pct: stmtTotal > 0 ? (stmtCovered / stmtTotal) * 100 : 0
+        }
+    };
+}
+
+module.exports = {
+    normalizeRelativeKey,
+    canonicalPathKey,
+    lookupCoverageForAnalysis,
+    mergeAnalysisWithCoverage,
+    countUnmatchedAnalysisFiles,
+    recomputeSummaryFromMergedFiles
+};

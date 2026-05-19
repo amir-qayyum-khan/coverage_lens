@@ -3,6 +3,11 @@ const path = require('path');
 const fs = require('fs');
 const { findJestProjectRoot, getMissingLines, findNearestJestConfig } = require('./coverageRunner');
 const { writeSuperDashboardJestSummary } = require('./superDashboardPersist');
+const { buildCollectCoverageFromPatterns } = require('../utils/coverageGlobs');
+const { resolveCollectCoverageScope } = require('../utils/sourceRoot');
+const { canonicalPathKey, normalizeRelativeKey } = require('../utils/coverageMerge');
+const { resolveCoverageKeyToAbsolute, toDisplayRelativePath } = require('../utils/coveragePaths');
+const { parseJestOutput } = require('../utils/jestOutputParser');
 
 /**
  * Run a git command and return its output
@@ -297,51 +302,28 @@ function runTests(clonePath, sendProgress, branch) {
         const tempConfigPath = path.join(jestRoot, 'jest.config.lens-temp.js');
         const baseConfigPath = findNearestJestConfig(jestRoot) || path.join(jestRoot, 'jest.config.js');
         const escapedBaseConfigPath = baseConfigPath.replace(/\\/g, '/');
-
-        // Identify source files to cover. If src exists, focus there, otherwise cover the root.
-        const hasSrc = fs.existsSync(path.join(jestRoot, 'src'));
-        const globPattern = hasSrc ? 'src/**/*.{js,jsx}' : '**/*.{js,jsx}';
+        const coverageScope = resolveCollectCoverageScope(jestRoot);
+        const collectPatterns = buildCollectCoverageFromPatterns(coverageScope);
+        const patternsJson = JSON.stringify(collectPatterns, null, 4).replace(/\n/g, '\n    ');
 
         const tempConfigContent = `
 const fs = require('fs');
-const baseConfig = fs.existsSync('${escapedBaseConfigPath}') ? require('${escapedBaseConfigPath}') : {};
 
 module.exports = {
-    ...baseConfig,
+    ...(function () {
+        const b = fs.existsSync('${escapedBaseConfigPath}') ? require('${escapedBaseConfigPath}') : {};
+        const keys = ['testEnvironment','setupFilesAfterEnv','setupFiles','moduleNameMapper','transform','transformIgnorePatterns','moduleFileExtensions','globals','testTimeout','snapshotSerializers','moduleDirectories','resolver','rootDir','roots','testMatch','testPathIgnorePatterns'];
+        const p = {};
+        keys.forEach(function (k) { if (b[k] !== undefined) p[k] = b[k]; });
+        return p;
+    })(),
     bail: 0,
     collectCoverage: true,
-    collectCoverageFrom: [
-        '${globPattern}',
-        '!**/*.test.js',
-        '!**/*.test.jsx',
-        '!**/*.spec.js',
-        '!**/*.spec.jsx',
-        '!**/__tests__/**',
-        '!**/__mocks__/**',
-        '!**/i18n/**',
-        '!**/config/**',
-        '!**/webpack*.js',
-        '!**/babel.config*.js',
-        '!**/.babelrc',
-        '!**/jest.config*.js',
-        '!**/preStart.js',
-        '!**/babel.prod.js',
-        '!**/babel.dev.js',
-        '!**/.eslintrc*',
-        '!**/WeStore.js',
-        '!**/version.js',
-        '!**/store.js',
-        '!**/coverage-booking-folder/**',
-        '!**/lcov-report/**',
-        '!**/*.css',
-        '!**/*.scss',
-        '!**/*.less',
-        '!**/*.html',
-        '!**/*.json'
-    ],
+    collectCoverageFrom: ${patternsJson},
     coverageDirectory: '${coverageDir.replace(/\\/g, '/')}',
     coverageReporters: ['json-summary', 'json'],
-    coverageThreshold: undefined
+    coverageThreshold: undefined,
+    coveragePathIgnorePatterns: []
 };
 `;
         try {
@@ -410,18 +392,12 @@ module.exports = {
                     }
 
                     results.summary = fullSummary.total;
-                    results.files = Object.entries(fullSummary)
-                        .filter(([key]) => key !== 'total')
-                        .map(([filePath, data]) => ({
-                            fileName: path.basename(filePath),
-                            // Use forward slashes for cross-platform consistency in mapping
-                            // Use clonePath as base to match analysisResults relative paths
-                            relativePath: path.relative(clonePath, filePath).split(path.sep).join('/'),
-                            lines: data.lines,
-                            branches: data.branches,
-                            statements: data.statements,
-                            missingLines: detailedCoverage[filePath] ? getMissingLines(detailedCoverage[filePath]) : []
-                        }));
+                    results.files = mapCoverageSummaryFiles(
+                        fullSummary,
+                        detailedCoverage,
+                        clonePath,
+                        jestRoot
+                    );
                     
                     // Keep for backward compatibility with writeSuperDashboardJestSummary if needed
                     results.coverage = {
@@ -509,46 +485,40 @@ function findTestFiles(dir) {
 }
 
 /**
- * Parse Jest text output to extract test counts
- * @param {string} output - Raw Jest output text
- * @returns {object}
+ * Map istanbul coverage-summary entries to app file rows (clone-relative paths).
+ * @param {object} fullSummary
+ * @param {object} detailedCoverage - coverage-final.json
+ * @param {string} clonePath
+ * @param {string} jestRoot
+ * @returns {object[]}
  */
-function parseJestOutput(output) {
-    const results = {
-        totalTests: 0,
-        passedTests: 0,
-        failedTests: 0,
-        testSuites: 0,
-        passedSuites: 0,
-        failedSuites: 0,
-        message: ''
-    };
+function mapCoverageSummaryFiles(fullSummary, detailedCoverage, clonePath, jestRoot) {
+    return Object.entries(fullSummary)
+        .filter(([key]) => key !== 'total')
+        .map(([filePath, data]) => {
+            const absoluteFile = resolveCoverageKeyToAbsolute(filePath, jestRoot);
+            const relativePath = toDisplayRelativePath(clonePath, absoluteFile, jestRoot);
+            const detailedKey = Object.keys(detailedCoverage).find(
+                (k) =>
+                    k === filePath ||
+                    canonicalPathKey(k) === canonicalPathKey(filePath) ||
+                    normalizeRelativeKey(k) === normalizeRelativeKey(filePath)
+            );
 
-    // Match "Tests:       X passed, Y total"
-    const testsMatch = output.match(/Tests:\s+(?:(\d+)\s+failed,\s+)?(?:(\d+)\s+skipped,\s+)?(?:(\d+)\s+passed,\s+)?(\d+)\s+total/);
-    if (testsMatch) {
-        results.failedTests = parseInt(testsMatch[1] || '0', 10);
-        results.passedTests = parseInt(testsMatch[3] || '0', 10);
-        results.totalTests = parseInt(testsMatch[4] || '0', 10);
-    }
-
-    // Match "Test Suites:  X passed, Y total"
-    const suitesMatch = output.match(/Test Suites:\s+(?:(\d+)\s+failed,\s+)?(?:(\d+)\s+skipped,\s+)?(?:(\d+)\s+passed,\s+)?(\d+)\s+total/);
-    if (suitesMatch) {
-        results.failedSuites = parseInt(suitesMatch[1] || '0', 10);
-        results.passedSuites = parseInt(suitesMatch[3] || '0', 10);
-        results.testSuites = parseInt(suitesMatch[4] || '0', 10);
-    }
-
-    if (results.failedTests > 0) {
-        results.message = `${results.failedTests} test(s) failed out of ${results.totalTests}`;
-    } else if (results.totalTests > 0) {
-        results.message = `All ${results.totalTests} tests passed`;
-    } else {
-        results.message = 'No tests found or executed';
-    }
-
-    return results;
+            return {
+                fileName: path.basename(absoluteFile),
+                filePath: absoluteFile,
+                relativePath,
+                relativePathKey: normalizeRelativeKey(relativePath),
+                lines: data.lines,
+                branches: data.branches,
+                statements: data.statements,
+                missingLines:
+                    detailedKey && detailedCoverage[detailedKey]
+                        ? getMissingLines(detailedCoverage[detailedKey])
+                        : []
+            };
+        });
 }
 
 /**
@@ -742,6 +712,7 @@ module.exports = {
     runTests,
     findTestFiles,
     parseJestOutput,
+    mapCoverageSummaryFiles,
     resolveJestSpawn,
     pushCoverageReport
 };
