@@ -2,13 +2,24 @@ const fs = require('fs');
 const path = require('path');
 const acorn = require('acorn');
 
+// Use @babel/parser for JSX-aware AST parsing (available as transitive dep of @babel/core)
+let babelParser = null;
+try {
+    babelParser = require('@babel/parser');
+} catch (e) {
+    // Fallback to acorn only
+}
+
 // File patterns to ignore
 const IGNORE_FILE_PATTERNS = [
     /\.test\.js$/,
     /\.spec\.js$/,
     /\.test\.jsx$/,
     /\.spec\.jsx$/,
+    /\.tests\.js$/,
+    /\.tests\.jsx$/,
     /\.html$/,
+    /i18n\//,
     /\.css$/,
     /\.scss$/,
     /\.less$/,
@@ -32,7 +43,7 @@ const IGNORE_FILE_PATTERNS = [
 ];
 
 // Folder names to ignore
-const IGNORE_FOLDER_NAMES = ['i18n', '__tests__', 'node_modules', '.git', 'dist', 'build', '__mocks__', 'config', 'public', 'assets', 'coverage', 'coverage-booking-folder', 'lcov-report'];
+const IGNORE_FOLDER_NAMES = ['i18n', '__tests__', '__test__', 'node_modules', '.git', 'dist', 'build', '__mocks__', 'config', 'public', 'assets', 'coverage', 'coverage-booking-folder', 'lcov-report'];
 
 /**
  * Check if a file should be ignored based on patterns
@@ -41,7 +52,8 @@ const IGNORE_FOLDER_NAMES = ['i18n', '__tests__', 'node_modules', '.git', 'dist'
  */
 function shouldIgnoreFile(filePath) {
     const fileName = path.basename(filePath);
-    return IGNORE_FILE_PATTERNS.some(pattern => pattern.test(fileName));
+    const normalizedPath = filePath.replace(/\\/g, '/');
+    return IGNORE_FILE_PATTERNS.some(pattern => pattern.test(fileName) || pattern.test(normalizedPath));
 }
 
 /**
@@ -59,6 +71,81 @@ function shouldIgnoreFolder(folderName) {
  * @returns {number} - Number of statements
  */
 function countStatements(code) {
+    // Try @babel/parser first — it handles JSX, TypeScript decorators, etc.
+    if (babelParser) {
+        try {
+            const ast = babelParser.parse(code, {
+                sourceType: 'module',
+                strictMode: false,
+                allowImportExportEverywhere: true,
+                allowAwaitOutsideFunction: true,
+                allowReturnOutsideFunction: true,
+                allowSuperOutsideMethod: true,
+                plugins: ['jsx', 'classProperties', 'optionalChaining', 'nullishCoalescingOperator']
+            });
+
+            let statementCount = 0;
+
+            function countNode(node) {
+                if (!node) return;
+
+                const statementTypes = [
+                    'ExpressionStatement',
+                    'BlockStatement',
+                    'EmptyStatement',
+                    'DebuggerStatement',
+                    'WithStatement',
+                    'ReturnStatement',
+                    'LabeledStatement',
+                    'BreakStatement',
+                    'ContinueStatement',
+                    'IfStatement',
+                    'SwitchStatement',
+                    'ThrowStatement',
+                    'TryStatement',
+                    'WhileStatement',
+                    'DoWhileStatement',
+                    'ForStatement',
+                    'ForInStatement',
+                    'ForOfStatement',
+                    'VariableDeclaration',
+                    'FunctionDeclaration',
+                    'ClassDeclaration',
+                    'ImportDeclaration',
+                    'ExportNamedDeclaration',
+                    'ExportDefaultDeclaration',
+                    'ExportAllDeclaration'
+                ];
+
+                if (statementTypes.includes(node.type)) {
+                    statementCount++;
+                }
+
+                for (const key in node) {
+                    if (key === 'type' || key === 'start' || key === 'end' || key === 'loc' || key === 'range') {
+                        continue;
+                    }
+                    const child = node[key];
+                    if (Array.isArray(child)) {
+                        child.forEach(c => {
+                            if (c && typeof c === 'object' && c.type) {
+                                countNode(c);
+                            }
+                        });
+                    } else if (child && typeof child === 'object' && child.type) {
+                        countNode(child);
+                    }
+                }
+            }
+
+            countNode(ast.program);
+            return statementCount;
+        } catch (babelErr) {
+            // Babel parse failed — try plain acorn, then fallback
+        }
+    }
+
+    // Acorn fallback (no JSX support)
     try {
         const ast = acorn.parse(code, {
             ecmaVersion: 'latest',
@@ -129,10 +216,6 @@ function countStatements(code) {
         return statementCount;
     } catch (error) {
         // If parsing fails, fall back to simple line counting
-        // We suppress the warning if it looks like JSX, which acorn doesn't support by default
-        if (!code.includes('<') && !code.includes('/>')) {
-            console.warn('AST parsing failed, using fallback:', error.message);
-        }
         return countStatementsFallback(code);
     }
 }
@@ -240,7 +323,7 @@ function getJsFiles(folderPath, basePath = folderPath) {
                     files.push(...getJsFiles(fullPath, basePath));
                 }
             } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.jsx'))) {
-                if (!shouldIgnoreFile(entry.name)) {
+                if (!shouldIgnoreFile(fullPath)) {
                     files.push(fullPath);
                 }
             }

@@ -382,7 +382,7 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
                         >
                             <strong>{unmatchedCount}</strong> analyzed file
                             {unmatchedCount === 1 ? '' : 's'} had no matching Jest coverage row
-                            (shown as &quot;No coverage data&quot;). Totals below are based on matched files only.
+                            (shown as &quot;No coverage data&quot;). Totals below include these files as 0% coverage to prevent decrease in total lines and statements.
                             {coverageResults?.diagnostics?.batchCount > 1 && (
                                 <span> Ran {coverageResults.diagnostics.batchCount} coverage batches.</span>
                             )}

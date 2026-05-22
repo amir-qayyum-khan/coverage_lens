@@ -66,6 +66,7 @@ function mergeAnalysisWithCoverage(analysisFiles, coverageFiles) {
     return analysisFiles.map((f) => {
         const cov = lookupCoverageForAnalysis(coverageFiles, f.relativePath);
         return {
+            ...f,
             relativePath: f.relativePath,
             lineCoverage: cov?.lines?.pct ?? null,
             coveredLines: cov?.lines?.covered ?? null,
@@ -97,13 +98,35 @@ function countUnmatchedAnalysisFiles(analysisFiles, coverageFiles) {
  * @returns {{ lines: { total: number, covered: number, pct: number }, statements: { total: number, covered: number, pct: number } }|null}
  */
 function recomputeSummaryFromMergedFiles(mergedFiles) {
-    const withData = mergedFiles.filter((f) => f.lineCoverage != null && f.totalLines != null);
-    if (withData.length === 0) return null;
+    if (!mergedFiles || mergedFiles.length === 0) return null;
 
-    const linesTotal = withData.reduce((s, f) => s + (f.totalLines || 0), 0);
-    const linesCovered = withData.reduce((s, f) => s + (f.coveredLines || 0), 0);
-    const stmtTotal = withData.reduce((s, f) => s + (f.totalStatements || 0), 0);
-    const stmtCovered = withData.reduce((s, f) => s + (f.coveredStatements || 0), 0);
+    let linesTotal = 0;
+    let linesCovered = 0;
+    let stmtTotal = 0;
+    let stmtCovered = 0;
+    let hasAnyData = false;
+
+    for (const f of mergedFiles) {
+        if (f.lineCoverage !== null && f.totalLines !== null) {
+            linesTotal += f.totalLines || 0;
+            linesCovered += f.coveredLines || 0;
+            hasAnyData = true;
+        } else if (f.codeLines != null) {
+            linesTotal += f.codeLines || 0;
+            hasAnyData = true;
+        }
+
+        if (f.statementCoverage !== null && f.totalStatements !== null) {
+            stmtTotal += f.totalStatements || 0;
+            stmtCovered += f.coveredStatements || 0;
+            hasAnyData = true;
+        } else if (f.statements != null) {
+            stmtTotal += f.statements || 0;
+            hasAnyData = true;
+        }
+    }
+
+    if (!hasAnyData) return null;
 
     return {
         lines: {

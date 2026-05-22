@@ -15,7 +15,7 @@ const {
 
 const JEST_CONFIG_FILENAMES = ['jest.config.js', 'jest.config.ts', 'jest.config.mjs', 'jest.config.cjs'];
 const MAX_SOURCE_FILES_THROTTLE = 150;
-const BATCH_SKIP_DIRS = ['node_modules', '__tests__', '__mocks__', 'i18n', 'config', 'coverage', 'dist', 'build'];
+const BATCH_SKIP_DIRS = ['node_modules', '__tests__', '__test__', '__mocks__', 'i18n', 'config', 'coverage', 'dist', 'build'];
 
 /**
  * Find the nearest package.json starting from the given path and moving up
@@ -189,14 +189,14 @@ function getSourceFilesInFolder(folderPath) {
                 const stat = fs.statSync(fullPath);
 
                 if (stat.isDirectory()) {
-                    const ignoreFolders = ['node_modules', '__tests__', 'coverage', 'dist', 'build', 'i18n', '.git', 'public', 'assets', '__mocks__', 'config', 'coverage-booking-folder', 'lcov-report'];
+                    const ignoreFolders = ['node_modules', '__tests__', '__test__', 'coverage', 'dist', 'build', 'i18n', '.git', 'public', 'assets', '__mocks__', 'config', 'coverage-booking-folder', 'lcov-report'];
                     if (!ignoreFolders.includes(item)) {
                         walk(fullPath);
                     }
                 } else if (stat.isFile() && (item.endsWith('.js') || item.endsWith('.jsx'))) {
                     const ignoreFiles = ['setupTests.js', 'postBuild.js', 'babelDev.js', 'babelProd.js', 'preStart.js', 'babel.prod.js', 'babel.dev.js', 'WeStore.js', 'version.js', 'store.js'];
                     const isConfig = item.startsWith('webpack.') || item.startsWith('babel.config.') || item.startsWith('jest.config.') || item === '.babelrc' || item.startsWith('.eslintrc');
-                    if (!item.endsWith('.test.js') && !item.endsWith('.spec.js') && !item.endsWith('.test.jsx') && !item.endsWith('.spec.jsx') && !ignoreFiles.includes(item) && !isConfig) {
+                    if (!item.endsWith('.test.js') && !item.endsWith('.spec.js') && !item.endsWith('.test.jsx') && !item.endsWith('.spec.jsx') && !item.endsWith('.tests.js') && !item.endsWith('.tests.jsx') && !ignoreFiles.includes(item) && !isConfig) {
                         files.push(fullPath);
                     }
                 }
@@ -259,12 +259,28 @@ function getBatchScopes(projectRoot, targetAnalysisPath, sourceFileCount) {
  * @returns {string} Absolute path to temp config
  */
 function writeTempJestConfig(projectRoot, scopeRelativeToRoot, coverageDir, configSuffix) {
-    const projectConfigPath = findNearestJestConfig(projectRoot) || path.join(projectRoot, 'jest.config.js');
-    const escapedProjectConfigPath = projectConfigPath.replace(/\\/g, '/');
+    const baseConfigPath = findNearestJestConfig(projectRoot) || path.join(projectRoot, 'jest.config.js');
+    const baseConfigExists = fs.existsSync(baseConfigPath);
+    const tempConfigPath = path.join(projectRoot, 'jest.config.js');
+    const backupConfigPath = path.join(projectRoot, 'jest.config.js.original');
+
+    // Escape base config path for loading
+    const escapedProjectConfigPath = baseConfigExists
+        ? (baseConfigPath === tempConfigPath ? backupConfigPath : baseConfigPath).replace(/\\/g, '/')
+        : tempConfigPath.replace(/\\/g, '/');
+
+    // Backup original jest.config.js if it exists
+    if (fs.existsSync(tempConfigPath)) {
+        try {
+            fs.renameSync(tempConfigPath, backupConfigPath);
+        } catch (e) {
+            console.warn(`[CoverageRunner] Failed to backup base config: ${e.message}`);
+        }
+    }
+
     const patterns = buildCollectCoverageFromPatterns(scopeRelativeToRoot);
     const patternsJson = JSON.stringify(patterns, null, 4).replace(/\n/g, '\n    ');
 
-    const tempConfigPath = path.join(projectRoot, `jest.config.coverage-temp${configSuffix}.js`);
     const tempConfigContent = `
 const fs = require('fs');
 
@@ -352,7 +368,10 @@ function buildTestPathPattern(scopeRelativeToRoot) {
  * @returns {{ jestArgs: string[], testPathPattern: string|null }}
  */
 function buildJestArgs(tempConfigPath, scopeRelativeToRoot, sourceFileCount, isFullSrcBatch) {
-    const normalizedConfigPath = tempConfigPath.split(path.sep).join('/');
+    const baseName = path.basename(tempConfigPath);
+    const normalizedConfigPath = baseName === 'jest.config.js'
+        ? 'jest.config.js'
+        : tempConfigPath.split(path.sep).join('/');
     const scope = (scopeRelativeToRoot || '').replace(/\\/g, '/');
     const patterns = buildCollectCoverageFromPatterns(scope);
     const testPathPattern = buildTestPathPattern(scope);
@@ -425,11 +444,7 @@ function runJestOnce(opts) {
 
     const jestCommandPreview = `${command} ${spawnArgs.join(' ')}`.slice(0, 200);
 
-    console.log(
-        `[CoverageRunner] Executing scope="${scope || '(root)'}"` +
-        (testPathPattern ? ` testPathPattern="${testPathPattern}"` : '') +
-        ` : ${command} ${jestArgs.slice(0, 6).join(' ')}...`
-    );
+    console.log(`[CoverageRunner] Executing: ${command} ${spawnArgs.join(' ')}`);
 
     return new Promise((resolve) => {
         const jest = spawn(command, spawnArgs, {
@@ -440,7 +455,7 @@ function runJestOnce(opts) {
                 CI: 'true',
                 NODE_OPTIONS: process.env.NODE_OPTIONS
                     ? `${process.env.NODE_OPTIONS} --max-old-space-size=4096`
-                    : '--max-old-space-size=4096'
+                    : '-- =4096'
             }
         });
 
@@ -459,6 +474,10 @@ function runJestOnce(opts) {
             try {
                 if (fs.existsSync(tempConfigPath)) {
                     fs.unlinkSync(tempConfigPath);
+                }
+                const backupConfigPath = path.join(projectRoot, 'jest.config.js.original');
+                if (fs.existsSync(backupConfigPath)) {
+                    fs.renameSync(backupConfigPath, tempConfigPath);
                 }
                 const logPath = path.join(coverageDir, 'jest-execution.log');
                 fs.writeFileSync(logPath, `Exit Code: ${code}\nSignal: ${signal}\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`, 'utf8');
@@ -481,6 +500,10 @@ function runJestOnce(opts) {
             try {
                 if (fs.existsSync(tempConfigPath)) {
                     fs.unlinkSync(tempConfigPath);
+                }
+                const backupConfigPath = path.join(projectRoot, 'jest.config.js.original');
+                if (fs.existsSync(backupConfigPath)) {
+                    fs.renameSync(backupConfigPath, tempConfigPath);
                 }
                 const logPath = path.join(coverageDir, 'jest-execution.log');
                 fs.writeFileSync(logPath, `Error: ${error.message}\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`, 'utf8');

@@ -17,6 +17,21 @@ const { parseJestOutput } = require('../utils/jestOutputParser');
  * @returns {Promise<{success: boolean, stdout: string, stderr: string}>}
  */
 function runGitCommand(args, cwd, timeout = 120000) {
+    const logArgs = args.map(arg => {
+        if (typeof arg === 'string' && arg.includes('://')) {
+            try {
+                const url = new URL(arg);
+                if (url.password) {
+                    url.password = '****';
+                }
+                return url.toString();
+            } catch (e) {
+                return arg;
+            }
+        }
+        return arg;
+    });
+    console.log(`[GitCommand] Executing: git ${logArgs.join(' ')}`);
     return new Promise((resolve) => {
         const git = spawn('git', args, {
             cwd,
@@ -255,7 +270,10 @@ function resolveJestSpawn(projectRoot, configPath) {
     ];
 
     if (configPath) {
-        const normalizedConfig = configPath.split(path.sep).join('/');
+        const baseName = path.basename(configPath);
+        const normalizedConfig = baseName === 'jest.config.js'
+            ? 'jest.config.js'
+            : configPath.split(path.sep).join('/');
         jestArgs.push(`--config=${normalizedConfig}`);
     }
 
@@ -299,9 +317,24 @@ function runTests(clonePath, sendProgress, branch) {
         // Create a temporary Jest config to ensure consistent coverage collection for the complete project
         // This disables bail and thresholds so failing tests don't block the report.
         const coverageDir = path.join(jestRoot, 'coverage');
-        const tempConfigPath = path.join(jestRoot, 'jest.config.lens-temp.js');
+        const tempConfigPath = path.join(jestRoot, 'jest.config.js');
+        const backupConfigPath = path.join(jestRoot, 'jest.config.js.original');
         const baseConfigPath = findNearestJestConfig(jestRoot) || path.join(jestRoot, 'jest.config.js');
-        const escapedBaseConfigPath = baseConfigPath.replace(/\\/g, '/');
+        const baseConfigExists = fs.existsSync(baseConfigPath);
+
+        const escapedBaseConfigPath = baseConfigExists
+            ? (baseConfigPath === tempConfigPath ? backupConfigPath : baseConfigPath).replace(/\\/g, '/')
+            : tempConfigPath.replace(/\\/g, '/');
+
+        // Backup original jest.config.js if it exists
+        if (fs.existsSync(tempConfigPath)) {
+            try {
+                fs.renameSync(tempConfigPath, backupConfigPath);
+            } catch (e) {
+                console.warn(`[runTests] Failed to backup base config: ${e.message}`);
+            }
+        }
+
         const coverageScope = resolveCollectCoverageScope(jestRoot);
         const collectPatterns = buildCollectCoverageFromPatterns(coverageScope);
         const patternsJson = JSON.stringify(collectPatterns, null, 4).replace(/\n/g, '\n    ');
@@ -350,6 +383,8 @@ module.exports = {
 
         const { command, args: spawnArgs } = resolveJestSpawn(jestRoot, tempConfigPath);
 
+        console.log(`[gitOperations] Executing Jest: ${command} ${spawnArgs.join(' ')}`);
+
         const jestChild = spawn(command, spawnArgs, {
             cwd: jestRoot,
             shell: true,
@@ -373,9 +408,14 @@ module.exports = {
             results.success = code === 0;
             results.jestProjectRoot = jestRoot;
 
-            // Cleanup temp config
+            // Cleanup temp config and restore backup
             try {
-                if (fs.existsSync(tempConfigPath)) fs.unlinkSync(tempConfigPath);
+                if (fs.existsSync(tempConfigPath)) {
+                    fs.unlinkSync(tempConfigPath);
+                }
+                if (fs.existsSync(backupConfigPath)) {
+                    fs.renameSync(backupConfigPath, tempConfigPath);
+                }
             } catch (e) { /* ignore */ }
 
             const coverageSummaryPath = path.join(jestRoot, 'coverage', 'coverage-summary.json');
@@ -425,9 +465,14 @@ module.exports = {
         });
 
         jestChild.on('error', (err) => {
-            // Cleanup temp config
+            // Cleanup temp config and restore backup
             try {
-                if (fs.existsSync(tempConfigPath)) fs.unlinkSync(tempConfigPath);
+                if (fs.existsSync(tempConfigPath)) {
+                    fs.unlinkSync(tempConfigPath);
+                }
+                if (fs.existsSync(backupConfigPath)) {
+                    fs.renameSync(backupConfigPath, tempConfigPath);
+                }
             } catch (e) { /* ignore */ }
 
             resolve({
