@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
     mergeAnalysisWithCoverage,
-    countUnmatchedAnalysisFiles,
-    recomputeSummaryFromMergedFiles
+    countUnmatchedAnalysisFiles
 } from '../utils/coverageMerge';
 import { resolveAnalysisFileAbsolute, TEST_SUFFIXES } from '../utils/coverageTestDiscovery';
 
@@ -131,6 +130,24 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
     const totalTests = coverageResults?.totalTests ?? 0;
     const passedTests = coverageResults?.passedTests ?? 0;
     const failedTests = coverageResults?.failedTests ?? 0;
+    const incompleteRun =
+        coverageResults?.incompleteRun === true ||
+        coverageResults?.diagnostics?.incompleteRun === true;
+    const passedSuites = coverageResults?.passedSuites ?? coverageResults?.diagnostics?.passedSuites ?? 0;
+    const failedSuites = coverageResults?.failedSuites ?? coverageResults?.diagnostics?.failedSuites ?? 0;
+    const testSuites = coverageResults?.testSuites ?? coverageResults?.diagnostics?.testSuites ?? 0;
+    const failedTestFiles =
+        coverageResults?.failedTestFiles ||
+        coverageResults?.diagnostics?.failedTestFiles ||
+        [];
+    const coverageFailedCount =
+        coverageResults?.coverageFailedCount ??
+        coverageResults?.diagnostics?.coverageFailedCount ??
+        failedTestFiles.filter((f) => f.reason === 'no-coverage').length;
+    const siblingBranches =
+        coverageResults?.diagnostics?.siblingBranches ||
+        coverageResults?.junctionSetup?.siblingBranches ||
+        [];
     const zeroCoverageWithTestCount = useMemo(
         () => files.filter((f) => f.zeroCoverageWithTest).length,
         [files]
@@ -141,20 +158,8 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
         [analysisResults, coverageResults]
     );
 
-    const displaySummary = useMemo(() => {
-        const jestSummary = coverageResults?.summary || {};
-        if (unmatchedCount > 0 && files.length > 0) {
-            const fromMerged = recomputeSummaryFromMergedFiles(files);
-            if (fromMerged) {
-                return {
-                    ...jestSummary,
-                    lines: fromMerged.lines,
-                    statements: fromMerged.statements
-                };
-            }
-        }
-        return jestSummary;
-    }, [coverageResults, unmatchedCount, files]);
+    // Keep top-level totals aligned with Jest's own summary output.
+    const displaySummary = coverageResults?.summary || {};
 
     const lineCoverage = displaySummary.lines?.pct ?? null;
     const statementCoverage = displaySummary.statements?.pct ?? null;
@@ -192,7 +197,12 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
         return <span className="sort-icon">{sortDir === 'asc' ? '↑' : '↓'}</span>;
     };
 
-    const hasCoverage = coverageResults?.hasCoverage !== false && coverageResults != null;
+    const hasCoverage = coverageResults?.hasCoverage === true;
+    const showTestsFailedPage =
+        !hasCoverage &&
+        (coverageResults?.error ||
+            coverageResults?.spawnError ||
+            (coverageResults?.success === false && !coverageResults?.message?.includes('Coverage from')));
 
     const handlePush = async () => {
         setShowConfirm(false);
@@ -311,8 +321,8 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
 
             {!hasCoverage ? (
                 <div className="coverage-no-data">
-                    <div className="coverage-no-data-icon">{coverageResults?.error || coverageResults?.success === false ? '⚠️' : '📊'}</div>
-                    <h3>{coverageResults?.error || coverageResults?.success === false ? 'Tests Failed' : 'No Coverage Data'}</h3>
+                    <div className="coverage-no-data-icon">{showTestsFailedPage ? '⚠️' : '📊'}</div>
+                    <h3>{showTestsFailedPage ? 'Tests Failed' : 'No Coverage Data'}</h3>
                     <p>{coverageResults?.message || coverageResults?.error
                         || 'Coverage could not be collected for this project. Make sure Jest is configured correctly.'
                     }</p>
@@ -346,15 +356,134 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
                                     {coverageResults.diagnostics.jestCommandPreview}
                                 </span>
                             )}
+                            {coverageResults?.diagnostics?.coverageExecutionMode && (
+                                <span style={{ display: 'block', marginTop: '6px', fontSize: '12px', opacity: 0.9 }}>
+                                    Collected via {coverageResults.diagnostics.coverageExecutionMode}
+                                    {coverageResults.diagnostics.phasesUsed?.length > 0 && (
+                                        <span> ({coverageResults.diagnostics.phasesUsed.join(' → ')})</span>
+                                    )}
+                                    {coverageResults.diagnostics.failedBatches?.length > 0 && (
+                                        <span> · {coverageResults.diagnostics.failedBatches.length} batch(es) needed per-file fallback</span>
+                                    )}
+                                </span>
+                            )}
                             {coverageResults?.diagnostics?.jestMessage && (
                                 <span style={{ display: 'block', marginTop: '6px', fontSize: '12px', opacity: 0.9 }}>
                                     {coverageResults.diagnostics.jestMessage}
                                 </span>
                             )}
+                            {failedTests > 0 && coverageResults?.diagnostics?.failureSummary?.groups?.length > 0 && (
+                                <ul
+                                    style={{
+                                        margin: '8px 0 0',
+                                        paddingLeft: '18px',
+                                        fontSize: '12px',
+                                        opacity: 0.9,
+                                        listStyle: 'disc'
+                                    }}
+                                >
+                                    {coverageResults.diagnostics.failureSummary.groups.slice(0, 5).map((group) => (
+                                        <li key={group.reason} title={group.reason}>
+                                            <strong>{group.count}×</strong> {group.reason}
+                                        </li>
+                                    ))}
+                                    {coverageResults.diagnostics.failureSummary.uniqueReasonCount > 5 && (
+                                        <li style={{ listStyle: 'none', marginLeft: '-18px' }}>
+                                            +{coverageResults.diagnostics.failureSummary.uniqueReasonCount - 5} more unique error(s)
+                                        </li>
+                                    )}
+                                </ul>
+                            )}
                         </div>
                     )}
 
-                    {hasCoverage && totalTests === 0 && (
+                    {siblingBranches.length > 0 && (
+                        <div
+                            className="push-status-banner push-status-error fade-in"
+                            style={{ marginBottom: '16px' }}
+                        >
+                            <strong>Sibling repo branches</strong>
+                            <ul style={{ margin: '8px 0 0 18px', padding: 0 }}>
+                                {siblingBranches.map((s) => (
+                                    <li key={s.repoName || s.linkName}>
+                                        <code>{s.repoName}</code>
+                                        {s.actualBranch ? (
+                                            <span>
+                                                {' '}
+                                                → {s.actualBranch}
+                                                {s.commit ? ` (${s.commit})` : ''}
+                                                {s.expectedBranch && s.expectedBranch !== s.actualBranch
+                                                    ? ` — expected ${s.expectedBranch}`
+                                                    : ''}
+                                            </span>
+                                        ) : (
+                                            <span> — not aligned</span>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                            {(coverageResults?.diagnostics?.junctionWarnings || coverageResults?.junctionSetup?.warnings || [])
+                                .length > 0 && (
+                                <p style={{ marginTop: '8px', marginBottom: 0 }}>
+                                    {(coverageResults.diagnostics?.junctionWarnings ||
+                                        coverageResults.junctionSetup?.warnings ||
+                                        [])[0]}
+                                </p>
+                            )}
+                        </div>
+                    )}
+
+                    {hasCoverage && (failedTestFiles.length > 0 || coverageFailedCount > 0) && (
+                        <div
+                            className="push-status-banner push-status-error fade-in"
+                            style={{ marginBottom: '16px' }}
+                        >
+                            <strong>Partial coverage</strong>
+                            {coverageResults?.diagnostics?.jestMessage || coverageResults?.message ? (
+                                <span> — {coverageResults.diagnostics?.jestMessage || coverageResults.message}</span>
+                            ) : null}
+                            {failedTestFiles.length > 0 && (
+                                <ul
+                                    style={{
+                                        margin: '8px 0 0',
+                                        paddingLeft: '18px',
+                                        fontSize: '12px',
+                                        opacity: 0.9,
+                                        listStyle: 'disc'
+                                    }}
+                                >
+                                    {failedTestFiles.slice(0, 8).map((entry) => (
+                                        <li key={entry.path}>
+                                            <code>{entry.path}</code>
+                                            {entry.reason === 'no-coverage' ? ' — no coverage written' : ' — tests failed'}
+                                        </li>
+                                    ))}
+                                    {failedTestFiles.length > 8 && (
+                                        <li style={{ listStyle: 'none', marginLeft: '-18px' }}>
+                                            +{failedTestFiles.length - 8} more failed test file(s)
+                                        </li>
+                                    )}
+                                </ul>
+                            )}
+                        </div>
+                    )}
+
+                    {hasCoverage && incompleteRun && failedTestFiles.length === 0 && (
+                        <div
+                            className="push-status-banner push-status-error fade-in"
+                            style={{ marginBottom: '16px' }}
+                        >
+                            <strong>Jest exited before summary</strong> (crash or OOM). Coverage is partial.
+                            {testSuites > 0 && (
+                                <span>
+                                    {' '}
+                                    Observed {passedSuites} passed and {failedSuites} failed test suite(s) before exit.
+                                </span>
+                            )}
+                        </div>
+                    )}
+
+                    {hasCoverage && totalTests === 0 && !incompleteRun && (
                         <div
                             className="push-status-banner push-status-error fade-in"
                             style={{ marginBottom: '16px' }}
@@ -382,7 +511,7 @@ function CoverageDetails({ coverageResults, analysisResults, folderPath, executi
                         >
                             <strong>{unmatchedCount}</strong> analyzed file
                             {unmatchedCount === 1 ? '' : 's'} had no matching Jest coverage row
-                            (shown as &quot;No coverage data&quot;). Totals below include these files as 0% coverage to prevent decrease in total lines and statements.
+                            (shown as &quot;No coverage data&quot;). Total coverage cards below use strict Jest summary values.
                             {coverageResults?.diagnostics?.batchCount > 1 && (
                                 <span> Ran {coverageResults.diagnostics.batchCount} coverage batches.</span>
                             )}

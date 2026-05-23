@@ -28,6 +28,39 @@ function SuperDashboard({
         } catch { return { username: '', token: '' }; }
     });
     const [credSaved, setCredSaved] = useState(false);
+    const [junctionSetupEnabled, setJunctionSetupEnabled] = useState(true);
+    const [prefsLoading, setPrefsLoading] = useState(true);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await window.electronAPI?.getAppPreferences?.();
+                if (!cancelled && res?.success && res.data) {
+                    setJunctionSetupEnabled(res.data.trapezeJunctionSetupEnabled === true);
+                }
+            } catch {
+                // keep default off
+            } finally {
+                if (!cancelled) {
+                    setPrefsLoading(false);
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const handleJunctionToggle = async (event) => {
+        const checked = event.target.checked;
+        setJunctionSetupEnabled(checked);
+        try {
+            await window.electronAPI?.setAppPreferences?.({ trapezeJunctionSetupEnabled: checked });
+        } catch {
+            setJunctionSetupEnabled(!checked);
+        }
+    };
 
     const saveCredentials = () => {
         localStorage.setItem('git_credentials', JSON.stringify(credentials));
@@ -200,6 +233,19 @@ function SuperDashboard({
                 {renderMetricCell(m?.branches)}
                 <td style={{ textAlign: 'center' }}>
                     {renderBranchTag(m?.branch)}
+                    {m?.tests?.incompleteRun && (
+                        <div
+                            title="Jest exited before summary — coverage may be partial"
+                            style={{
+                                fontSize: '10px',
+                                color: 'var(--warning, #b8860b)',
+                                marginTop: '4px',
+                                fontWeight: 600
+                            }}
+                        >
+                            ⚠ Incomplete run
+                        </div>
+                    )}
                 </td>
             </tr>
         );
@@ -332,6 +378,32 @@ function SuperDashboard({
                     Coverage data is fetched directly from Gitea (<code>developV2</code> → <code>develop</code>).
                     Results stream in as each project responds.
                 </p>
+                <label
+                    className="settings-desc"
+                    style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '8px',
+                        fontSize: '12px',
+                        color: 'var(--text-secondary)',
+                        marginTop: '12px',
+                        maxWidth: '720px',
+                        cursor: prefsLoading ? 'wait' : 'pointer'
+                    }}
+                >
+                    <input
+                        type="checkbox"
+                        checked={junctionSetupEnabled}
+                        onChange={handleJunctionToggle}
+                        disabled={prefsLoading}
+                        aria-label="Enable Trapeze junction links (we-common, we-framework, we-track)"
+                        style={{ marginTop: '2px' }}
+                    />
+                    <span>
+                        Enable Trapeze junction links (we-common / we-framework / we-track).
+                        When off, clone &amp; test and local coverage skip sibling repo clones and Windows junction setup.
+                    </span>
+                </label>
             </header>
 
             {renderTable('You Apps', YOU_APPS)}

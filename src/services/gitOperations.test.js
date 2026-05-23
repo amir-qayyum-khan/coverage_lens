@@ -9,13 +9,44 @@ jest.mock('./coverageRunner', () => ({
     getMissingLines: jest.fn(() => [])
 }));
 
+jest.mock('./trapezeJunctionSetup', () => ({
+    setupTrapezeUIJunctions: jest.fn().mockResolvedValue({
+        success: true,
+        skipped: true,
+        message: 'skipped',
+        profile: null,
+        links: [],
+        warnings: []
+    })
+}));
+
+jest.mock('./nodeInstaller', () => ({
+    installPackages: jest.fn().mockResolvedValue({ success: true, message: 'ok' })
+}));
+
+jest.mock('../utils/repoCommandLogger', () => ({
+    beginRepoLogSession: jest.fn(),
+    logRepoCommand: jest.fn(),
+    resolveRepoNameFromCwd: jest.fn(() => 'TestRepo'),
+    maskCommandLine: jest.fn((s) => s)
+}));
+
 jest.mock('child_process', () => ({
     spawn: jest.fn()
 }));
 
+jest.mock('./jestResilientCoverage', () => ({
+    runResilientJestCoverage: jest.fn(),
+    findTestFiles: jest.fn(() => [])
+}));
+
 const { spawn } = require('child_process');
 const { findJestProjectRoot, findNearestJestConfig } = require('./coverageRunner');
+const { runResilientJestCoverage } = require('./jestResilientCoverage');
+const { setupTrapezeUIJunctions } = require('./trapezeJunctionSetup');
+const { beginRepoLogSession } = require('../utils/repoCommandLogger');
 const {
+    cloneAndTest,
     runTests,
     parseJestOutput,
     mapCoverageSummaryFiles,
@@ -78,32 +109,43 @@ describe('gitOperations', () => {
             expect(spawn).not.toHaveBeenCalled();
         });
 
-        test('runs Jest in discovered root and reads coverage summary', async () => {
+        test('runs isolated Jest coverage and reads merged summary', async () => {
             const jestRoot = path.join(tmpDir, 'packages', 'app');
-            fs.mkdirSync(path.join(jestRoot, 'coverage'), { recursive: true });
-            fs.writeFileSync(
-                path.join(jestRoot, 'coverage', 'coverage-summary.json'),
-                JSON.stringify({
-                    total: {
-                        lines: { pct: 100, covered: 1, total: 1 },
-                        statements: { pct: 100, covered: 1, total: 1 },
-                        branches: { pct: 100, covered: 1, total: 1 },
-                        functions: { pct: 100, covered: 1, total: 1 }
-                    }
-                }),
-                'utf8'
-            );
+            fs.mkdirSync(jestRoot, { recursive: true });
 
             findJestProjectRoot.mockReturnValue(jestRoot);
             findNearestJestConfig.mockReturnValue(null);
-            spawn.mockImplementation(() =>
-                mockJestChild(0, 'Tests:       1 passed, 1 total\nTest Suites: 1 passed, 1 total\n')
-            );
+
+            const fullSummary = {
+                total: {
+                    lines: { pct: 100, covered: 1, total: 1 },
+                    statements: { pct: 100, covered: 1, total: 1 },
+                    branches: { pct: 100, covered: 1, total: 1 },
+                    functions: { pct: 100, covered: 1, total: 1 }
+                }
+            };
+
+            runResilientJestCoverage.mockResolvedValue({
+                success: true,
+                hasCoverage: true,
+                fullSummary,
+                detailed: {},
+                message: 'Coverage from 1/1 test file(s)',
+                totalTests: 1,
+                passedTests: 1,
+                failedTests: 0,
+                testSuites: 1,
+                passedSuites: 1,
+                failedSuites: 0,
+                incompleteRun: false,
+                failedTestFiles: [],
+                exitCode: 0,
+                diagnostics: { coverageExecutionMode: 'full', phasesUsed: ['full'] }
+            });
 
             const r = await runTests(tmpDir, () => {}, 'feature/x');
-            expect(spawn).toHaveBeenCalled();
-            const spawnOpts = spawn.mock.calls[0][2];
-            expect(spawnOpts.cwd).toBe(jestRoot);
+            expect(runResilientJestCoverage).toHaveBeenCalled();
+            expect(spawn).not.toHaveBeenCalled();
             expect(r.success).toBe(true);
             expect(r.jestProjectRoot).toBe(jestRoot);
             expect(r.coverage.total.lines.pct).toBe(100);
@@ -153,6 +195,61 @@ describe('gitOperations', () => {
                 expect(args).toContain('--coverage');
             } finally {
                 fs.rmSync(emptyRoot, { recursive: true, force: true });
+            }
+        });
+    });
+
+    describe('cloneAndTest', () => {
+        test('invokes setupTrapezeUIJunctions after checkout and before install', async () => {
+            const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clone-target-'));
+            const clonePath = path.join(targetDir, 'TrapezeDRTCoreUI');
+            fs.mkdirSync(clonePath, { recursive: true });
+            fs.mkdirSync(path.join(clonePath, 'source'), { recursive: true });
+            fs.writeFileSync(path.join(clonePath, 'package.json'), '{}');
+            fs.writeFileSync(
+                path.join(clonePath, 'source', 'package.json'),
+                JSON.stringify({ devDependencies: { jest: '^27.0.0' } })
+            );
+            fs.writeFileSync(path.join(clonePath, 'source', 'jest.config.js'), 'module.exports = {};');
+
+            findJestProjectRoot.mockReturnValue(path.join(clonePath, 'source'));
+            spawn.mockImplementation((cmd, args) => {
+                if (cmd === 'git') {
+                    const proc = new EventEmitter();
+                    proc.stdout = new EventEmitter();
+                    proc.stderr = new EventEmitter();
+                    process.nextTick(() => {
+                        if (args[0] === 'remote') {
+                            proc.stdout.emit(
+                                'data',
+                                Buffer.from('https://git.example/Trapeze/TrapezeDRTCoreUI.git')
+                            );
+                        }
+                        proc.emit('close', 0);
+                    });
+                    return proc;
+                }
+                return mockJestChild(0, 'Tests: 1 passed, 1 total\n');
+            });
+
+            try {
+                await cloneAndTest(
+                    'https://git.example/Trapeze/TrapezeDRTCoreUI.git',
+                    targetDir,
+                    () => {},
+                    null,
+                    'develop',
+                    'CoreUI'
+                );
+
+                expect(beginRepoLogSession).toHaveBeenCalled();
+                expect(setupTrapezeUIJunctions).toHaveBeenCalled();
+                const [calledClonePath, opts] = setupTrapezeUIJunctions.mock.calls[0];
+                expect(calledClonePath).toBe(clonePath);
+                expect(opts.branch).toBe('develop');
+                expect(typeof opts.runGitCommand).toBe('function');
+            } finally {
+                fs.rmSync(targetDir, { recursive: true, force: true });
             }
         });
     });

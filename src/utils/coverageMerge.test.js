@@ -3,8 +3,7 @@ const {
     canonicalPathKey,
     lookupCoverageForAnalysis,
     mergeAnalysisWithCoverage,
-    countUnmatchedAnalysisFiles,
-    recomputeSummaryFromMergedFiles
+    countUnmatchedAnalysisFiles
 } = require('./coverageMerge');
 
 describe('coverageMerge', () => {
@@ -56,19 +55,5 @@ describe('coverageMerge', () => {
         const analysis = [{ relativePath: 'a.js' }, { relativePath: 'b.js' }];
         const coverage = [{ relativePath: 'a.js', lines: {} }];
         expect(countUnmatchedAnalysisFiles(analysis, coverage)).toBe(1);
-    });
-
-    test('recomputeSummaryFromMergedFiles with unmatched files using codeLines and statements', () => {
-        const merged = [
-            { lineCoverage: 50, coveredLines: 5, totalLines: 10, statementCoverage: 50, coveredStatements: 2, totalStatements: 4 },
-            { lineCoverage: null, coveredLines: null, totalLines: null, statementCoverage: null, coveredStatements: null, totalStatements: null, codeLines: 15, statements: 12 }
-        ];
-        const summary = recomputeSummaryFromMergedFiles(merged);
-        expect(summary.lines.total).toBe(25); // 10 + 15
-        expect(summary.lines.covered).toBe(5);  // 5 + 0
-        expect(summary.lines.pct).toBe(20);    // (5 / 25) * 100
-        expect(summary.statements.total).toBe(16); // 4 + 12
-        expect(summary.statements.covered).toBe(2);  // 2 + 0
-        expect(summary.statements.pct).toBe(12.5); // (2 / 16) * 100
     });
 });

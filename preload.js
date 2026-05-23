@@ -56,6 +56,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('superDashboard:rememberClone', { clonePath }),
     browseSuperDashboardReposParent: () => ipcRenderer.invoke('superDashboard:browseReposParent'),
 
+    // App preferences (persisted in userData)
+    getAppPreferences: () => ipcRenderer.invoke('app:getPreferences'),
+    setAppPreferences: (partial) => ipcRenderer.invoke('app:setPreferences', partial),
+
     // App Operations APIs
     cloneAndTest: (repoUrl, targetDir, credentials, branch, progressKey) =>
         ipcRenderer.invoke('app:cloneAndTest', { repoUrl, targetDir, credentials, branch, progressKey }),

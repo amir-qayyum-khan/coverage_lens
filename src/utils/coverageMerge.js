@@ -92,61 +92,10 @@ function countUnmatchedAnalysisFiles(analysisFiles, coverageFiles) {
     ).length;
 }
 
-/**
- * Recompute line/statement totals from merged rows that have Jest data.
- * @param {Array<{ lineCoverage: number|null, coveredLines: number|null, totalLines: number|null, statementCoverage: number|null, coveredStatements: number|null, totalStatements: number|null }>} mergedFiles
- * @returns {{ lines: { total: number, covered: number, pct: number }, statements: { total: number, covered: number, pct: number } }|null}
- */
-function recomputeSummaryFromMergedFiles(mergedFiles) {
-    if (!mergedFiles || mergedFiles.length === 0) return null;
-
-    let linesTotal = 0;
-    let linesCovered = 0;
-    let stmtTotal = 0;
-    let stmtCovered = 0;
-    let hasAnyData = false;
-
-    for (const f of mergedFiles) {
-        if (f.lineCoverage !== null && f.totalLines !== null) {
-            linesTotal += f.totalLines || 0;
-            linesCovered += f.coveredLines || 0;
-            hasAnyData = true;
-        } else if (f.codeLines != null) {
-            linesTotal += f.codeLines || 0;
-            hasAnyData = true;
-        }
-
-        if (f.statementCoverage !== null && f.totalStatements !== null) {
-            stmtTotal += f.totalStatements || 0;
-            stmtCovered += f.coveredStatements || 0;
-            hasAnyData = true;
-        } else if (f.statements != null) {
-            stmtTotal += f.statements || 0;
-            hasAnyData = true;
-        }
-    }
-
-    if (!hasAnyData) return null;
-
-    return {
-        lines: {
-            total: linesTotal,
-            covered: linesCovered,
-            pct: linesTotal > 0 ? (linesCovered / linesTotal) * 100 : 0
-        },
-        statements: {
-            total: stmtTotal,
-            covered: stmtCovered,
-            pct: stmtTotal > 0 ? (stmtCovered / stmtTotal) * 100 : 0
-        }
-    };
-}
-
 module.exports = {
     normalizeRelativeKey,
     canonicalPathKey,
     lookupCoverageForAnalysis,
     mergeAnalysisWithCoverage,
-    countUnmatchedAnalysisFiles,
-    recomputeSummaryFromMergedFiles
+    countUnmatchedAnalysisFiles
 };

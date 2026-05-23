@@ -103,6 +103,30 @@ describe('superDashboardPersist', () => {
         expect(data.reportSource).toBe('clone-test');
     });
 
+    test('persists incompleteRun flag on tests block', () => {
+        writeSuperDashboardJestSummary(tmpDir, 'developV2', '/jest', {
+            totalTests: 0,
+            passedTests: 0,
+            failedTests: 0,
+            testSuites: 518,
+            success: false,
+            exitCode: 1,
+            incompleteRun: true,
+            coverage: {
+                total: {
+                    lines: { pct: 45, covered: 45, total: 100 },
+                    statements: { pct: 45, covered: 45, total: 100 },
+                    branches: { pct: 40, covered: 40, total: 100 },
+                    functions: { pct: 40, covered: 40, total: 100 }
+                }
+            }
+        });
+        const data = JSON.parse(
+            fs.readFileSync(path.join(tmpDir, '.code-analyzer', 'super-dashboard-jest.json'), 'utf8')
+        );
+        expect(data.tests.incompleteRun).toBe(true);
+    });
+
     test('writes reportSource code-analysis when set', () => {
         writeSuperDashboardJestSummary(tmpDir, null, '/proj', {
             reportSource: 'code-analysis',

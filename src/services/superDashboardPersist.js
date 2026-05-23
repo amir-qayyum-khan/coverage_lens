@@ -30,7 +30,8 @@ function writeSuperDashboardJestSummary(repoRoot, branch, jestProjectRoot, resul
                 failedTests: results.failedTests,
                 testSuites: results.testSuites,
                 success: results.success,
-                exitCode: results.exitCode
+                exitCode: results.exitCode,
+                incompleteRun: results.incompleteRun === true
             },
             coverage: total
                 ? {

@@ -6,7 +6,9 @@ const {
     findJestProjectRoot,
     isJestProjectDirectory,
     packageJsonDeclaresJest,
+    runCoverage,
     getBatchScopes,
+    resolveCoverageExecutionPlan,
     mergeCoverageSummaries,
     mergeCoverageFinal,
     buildJestArgs,
@@ -236,17 +238,30 @@ describe('coverageRunner', () => {
     });
 
     describe('buildJestArgs', () => {
-        test('adds testPathPattern scoped to folder (matches npx jest CLI)', () => {
-            const { jestArgs, testPathPattern } = buildJestArgs('/tmp/jest.config.js', 'src/components/booking', 50, false);
-            expect(testPathPattern).toBe('src/components/booking');
-            expect(jestArgs.some((a) => a === '--testPathPattern=src/components/booking')).toBe(true);
-            expect(jestArgs.some((a) => a.startsWith('--collectCoverageFrom='))).toBe(true);
+        test('matches direct Jest command profile without coverage scope overrides', () => {
+            const { jestArgs, testPathPattern } = buildJestArgs('/tmp/jest.config.js', '/tmp/coverage_temp/root');
+            expect(testPathPattern).toBeNull();
+            expect(jestArgs).toEqual(
+                expect.arrayContaining([
+                    '--coverage',
+                    '--coverageDirectory=/tmp/coverage_temp/root',
+                    '--coverageReporters=json-summary',
+                    '--coverageReporters=json',
+                    '--coverageReporters=text',
+                    '--passWithNoTests',
+                    '--forceExit',
+                    '--maxWorkers=50%',
+                    '--detectOpenHandles'
+                ])
+            );
+            expect(jestArgs.some((a) => a.startsWith('--collectCoverageFrom='))).toBe(false);
+            expect(jestArgs.some((a) => a.startsWith('--testPathPattern='))).toBe(false);
         });
 
-        test('omits testPathPattern for project-wide empty scope', () => {
-            const { jestArgs, testPathPattern } = buildJestArgs('/tmp/jest.config.js', '', 50, false);
+        test('keeps config path normalized', () => {
+            const { jestArgs, testPathPattern } = buildJestArgs('/tmp/jest.config.js', '/tmp/coverage');
             expect(testPathPattern).toBeNull();
-            expect(jestArgs.some((a) => a.startsWith('--testPathPattern='))).toBe(false);
+            expect(jestArgs[0]).toBe('--config=jest.config.js');
         });
     });
 
@@ -288,6 +303,115 @@ describe('coverageRunner', () => {
             expect(parsed.files).toHaveLength(1);
             expect(parsed.files[0].relativePath).toBe('in.js');
             expect(parsed.diagnostics.skippedKeyCount).toBe(1);
+        });
+    });
+
+    describe('resolveCoverageExecutionPlan', () => {
+        test('returns hybrid execution mode', () => {
+            const plan = resolveCoverageExecutionPlan('/tmp/project', '/tmp/project/src', 9999);
+            expect(plan).toEqual({
+                scopes: [],
+                mode: 'hybrid'
+            });
+        });
+    });
+
+    describe('runCoverage exact-match mode', () => {
+        let tmpDir;
+
+        beforeEach(() => {
+            tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cov-run-mode-'));
+            fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'cov-run-mode' }), 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'jest.config.js'), 'module.exports = {};\n', 'utf8');
+            fs.mkdirSync(path.join(tmpDir, 'src', 'components'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'src', 'components', 'sample.js'), 'export const x = 1;\n', 'utf8');
+            fs.writeFileSync(
+                path.join(tmpDir, 'src', 'components', 'sample.test.js'),
+                'test("sample", () => {});\n',
+                'utf8'
+            );
+
+            const binDir = path.join(tmpDir, 'node_modules', '.bin');
+            fs.mkdirSync(binDir, { recursive: true });
+
+            const fakeJestPath = path.join(binDir, 'jest-fake.js');
+            fs.writeFileSync(
+                fakeJestPath,
+                `
+const fs = require('fs');
+const path = require('path');
+
+const configArg = process.argv.find((arg) => arg.startsWith('--config='));
+const coverageDirArg = process.argv.find((arg) => arg.startsWith('--coverageDirectory='));
+const configPath = configArg ? configArg.split('=')[1] : 'jest.config.js';
+const resolvedConfig = path.resolve(process.cwd(), configPath);
+const config = require(resolvedConfig);
+const coverageDir = coverageDirArg
+    ? coverageDirArg.slice('--coverageDirectory='.length)
+    : (config.coverageDirectory || path.join(process.cwd(), 'coverage'));
+
+fs.mkdirSync(coverageDir, { recursive: true });
+const filePath = path.join(process.cwd(), 'src', 'components', 'sample.js');
+const summary = {
+    [filePath]: {
+        lines: { total: 10, covered: 7, pct: 70 },
+        statements: { total: 10, covered: 7, pct: 70 },
+        functions: { total: 2, covered: 1, pct: 50 },
+        branches: { total: 4, covered: 2, pct: 50 }
+    },
+    total: {
+        lines: { total: 10, covered: 7, pct: 70 },
+        statements: { total: 10, covered: 7, pct: 70 },
+        functions: { total: 2, covered: 1, pct: 50 },
+        branches: { total: 4, covered: 2, pct: 50 }
+    }
+};
+const detailed = {
+    [filePath]: {
+        statementMap: { 0: { start: { line: 1 } } },
+        s: { 0: 1 }
+    }
+};
+
+fs.writeFileSync(path.join(coverageDir, 'coverage-summary.json'), JSON.stringify(summary), 'utf8');
+fs.writeFileSync(path.join(coverageDir, 'coverage-final.json'), JSON.stringify(detailed), 'utf8');
+process.stdout.write('Tests: 1 passed, 1 total\\n');
+process.stdout.write('Test Suites: 1 passed, 1 total\\n');
+                `.trim(),
+                'utf8'
+            );
+
+            if (process.platform === 'win32') {
+                fs.writeFileSync(
+                    path.join(binDir, 'jest.cmd'),
+                    '@echo off\r\nnode "%~dp0\\jest-fake.js" %*\r\n',
+                    'utf8'
+                );
+            } else {
+                const jestShim = path.join(binDir, 'jest');
+                fs.writeFileSync(
+                    jestShim,
+                    '#!/usr/bin/env node\nrequire("./jest-fake.js");\n',
+                    'utf8'
+                );
+                fs.chmodSync(jestShim, 0o755);
+            }
+        });
+
+        afterEach(() => {
+            try {
+                fs.rmSync(tmpDir, { recursive: true, force: true });
+            } catch {
+                // ignore
+            }
+        });
+
+        test('reports hybrid diagnostics for full-source analysis', async () => {
+            const result = await runCoverage(tmpDir);
+            expect(result.success).toBe(true);
+            expect(result.hasCoverage).toBe(true);
+            expect(result.summary.statements.pct).toBe(70);
+            expect(result.diagnostics.coverageExecutionMode).toMatch(/full|hybrid|batch/);
         });
     });
 });

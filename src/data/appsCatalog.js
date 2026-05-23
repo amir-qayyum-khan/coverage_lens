@@ -1,6 +1,6 @@
 /** Catalog apps shown on Dashboard and Super Dashboard */
 
-export const YOU_APPS = [
+const YOU_APPS = [
     { name: 'LaunchpadUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTPortalsLaunchpadUI.git' },
     { name: 'YouTravelUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouTravelUI.git' },
     { name: 'YouOperateUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouOperateUI.git' },
@@ -10,7 +10,7 @@ export const YOU_APPS = [
     { name: 'YouCertUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouCertUI.git' }
 ];
 
-export const WE_APPS = [
+const WE_APPS = [
     { name: 'CoreUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTCoreUI.git' },
     { name: 'WeCertNEMT-UI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTWeCertNEMT-UI.git' },
     { name: 'WeTrackUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTWeTrackUI.git' },
@@ -21,9 +21,19 @@ export const WE_APPS = [
     { name: 'FrameworkUI', url: 'https://git.we-support.se/Trapeze/TrapezeFrameworkUI.git' }
 ];
 
-/** Folder name produced by git clone (basename of repo URL without .git) */
-export function repoFolderKeyFromUrl(repoUrl) {
+/**
+ * Folder name produced by git clone (basename of repo URL without .git)
+ * @param {string} repoUrl
+ * @returns {string}
+ */
+function repoFolderKeyFromUrl(repoUrl) {
     const trimmed = String(repoUrl || '').replace(/\.git$/i, '').replace(/\/$/, '');
     const parts = trimmed.split('/').filter(Boolean);
     return parts.length ? parts[parts.length - 1] : '';
 }
+
+module.exports = {
+    YOU_APPS,
+    WE_APPS,
+    repoFolderKeyFromUrl
+};

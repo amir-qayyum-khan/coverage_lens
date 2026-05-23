@@ -8,15 +8,45 @@ const { resolveCollectCoverageScope } = require('../utils/sourceRoot');
 const { canonicalPathKey, normalizeRelativeKey } = require('../utils/coverageMerge');
 const { resolveCoverageKeyToAbsolute, toDisplayRelativePath } = require('../utils/coveragePaths');
 const { parseJestOutput } = require('../utils/jestOutputParser');
+const {
+    beginRepoLogSession,
+    logRepoCommand,
+    resolveRepoNameFromCwd,
+    maskCommandLine
+} = require('../utils/repoCommandLogger');
+const { runResilientJestCoverage, findTestFiles } = require('./jestResilientCoverage');
+
+/**
+ * Resolve repo log name for a git invocation (clone targets repo folder, not parent cwd).
+ * @param {string[]} args
+ * @param {string} cwd
+ * @param {string} [explicitRepoName]
+ * @returns {string}
+ */
+function resolveGitLogRepoName(args, cwd, explicitRepoName) {
+    if (explicitRepoName) {
+        return explicitRepoName;
+    }
+    if (args[0] === 'clone' && args[2]) {
+        return path.basename(args[2]);
+    }
+    return resolveRepoNameFromCwd(cwd);
+}
 
 /**
  * Run a git command and return its output
  * @param {string[]} args - Git command arguments
  * @param {string} cwd - Working directory
  * @param {number} [timeout=120000] - Timeout in ms
+ * @param {object} [options]
+ * @param {string} [options.repoName] - Log file key (defaults from cwd / clone path)
+ * @param {{ username?: string, token?: string }|null} [options.credentials] - Mask secrets in logs
  * @returns {Promise<{success: boolean, stdout: string, stderr: string}>}
  */
-function runGitCommand(args, cwd, timeout = 120000) {
+function runGitCommand(args, cwd, timeout = 120000, options = {}) {
+    const { repoName: explicitRepoName, credentials = null } = options;
+    const logRepoName = resolveGitLogRepoName(args, cwd, explicitRepoName);
+
     const logArgs = args.map(arg => {
         if (typeof arg === 'string' && arg.includes('://')) {
             try {
@@ -31,7 +61,10 @@ function runGitCommand(args, cwd, timeout = 120000) {
         }
         return arg;
     });
-    console.log(`[GitCommand] Executing: git ${logArgs.join(' ')}`);
+    const commandLine = `git ${logArgs.join(' ')}`;
+    console.log(`[GitCommand] Executing: ${commandLine}`);
+    const startedAt = Date.now();
+
     return new Promise((resolve) => {
         const git = spawn('git', args, {
             cwd,
@@ -51,20 +84,43 @@ function runGitCommand(args, cwd, timeout = 120000) {
             stderr += data.toString();
         });
 
-        git.on('close', (code) => {
+        const finish = (result, spawnError = '') => {
+            logRepoCommand({
+                repoName: logRepoName,
+                commandType: 'git',
+                command: commandLine,
+                cwd,
+                success: result.success,
+                exitCode: result.exitCode ?? (result.success ? 0 : 1),
+                stdout: result.stdout,
+                stderr: result.stderr,
+                spawnError,
+                durationMs: Date.now() - startedAt,
+                credentials
+            });
             resolve({
+                success: result.success,
+                stdout: result.stdout,
+                stderr: result.stderr
+            });
+        };
+
+        git.on('close', (code) => {
+            finish({
                 success: code === 0,
                 stdout: stdout.trim(),
-                stderr: stderr.trim()
+                stderr: stderr.trim(),
+                exitCode: code
             });
         });
 
         git.on('error', (err) => {
-            resolve({
+            finish({
                 success: false,
-                stdout: '',
-                stderr: err.message
-            });
+                stdout: stdout.trim(),
+                stderr: stderr.trim(),
+                exitCode: null
+            }, err.message);
         });
     });
 }
@@ -77,9 +133,10 @@ function runGitCommand(args, cwd, timeout = 120000) {
  * @param {object} [credentials] - Git credentials {username, token}
  * @param {string} [branch] - Branch to checkout (defaults to master)
  * @param {string} [progressKey] - UI key for progress events (must match Dashboard card id, e.g. catalog app name)
+ * @param {{ junctionSetupEnabled?: boolean }} [options] - App options (junction/sm-link setup)
  * @returns {Promise<{success: boolean, message: string, branch: string|null, testResults: object|null}>}
  */
-async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch, progressKey) {
+async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch, progressKey, options = {}) {
     const repoName = path.basename(repoUrl, '.git');
     const clonePath = path.join(targetDir, repoName);
     // Dashboard keys status by app.name; URL basename (e.g. TrapezeDRTCoreUI) would never match "CoreUI".
@@ -107,6 +164,15 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
         }
     }
 
+    const targetBranch = branch || 'master';
+
+    beginRepoLogSession(repoName, {
+        operation: 'cloneAndTest',
+        repoUrl: maskCommandLine(repoUrl),
+        targetDir,
+        branch: targetBranch
+    });
+
     try {
         // Step 1: Clone
         sendProgress('cloning', `Cloning ${repoName}...`, 10);
@@ -115,7 +181,12 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
             // If already cloned, just cd into it
             sendProgress('cloning', `Repository already exists at ${clonePath}, using existing...`, 15);
         } else {
-            const cloneResult = await runGitCommand(['clone', authRepoUrl, clonePath], targetDir, 300000);
+            const cloneResult = await runGitCommand(
+                ['clone', authRepoUrl, clonePath],
+                targetDir,
+                300000,
+                { repoName, credentials }
+            );
             if (!cloneResult.success) {
                 // Strip credentials from error message if they leaked
                 let cleanError = cloneResult.stderr;
@@ -138,26 +209,35 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
 
         // Step 2: Fetch origin
         sendProgress('fetching', 'Fetching latest from origin...', 30);
-        const fetchResult = await runGitCommand(['fetch', 'origin'], clonePath);
+        const fetchResult = await runGitCommand(['fetch', 'origin'], clonePath, 120000, {
+            repoName,
+            credentials
+        });
         if (!fetchResult.success) {
             sendProgress('fetching', `Fetch warning: ${fetchResult.stderr}`, 35);
         }
         sendProgress('fetching', 'Fetch complete', 40);
 
         // Step 3: Checkout and sync with remote
-        const targetBranch = branch || 'master';
         sendProgress('checkout', `Checking out ${targetBranch}...`, 45);
 
+        const gitOpts = { repoName, credentials };
+
         // Try to checkout existing (use -f to discard any accidental local changes)
-        let checkoutResult = await runGitCommand(['checkout', '-f', targetBranch], clonePath);
+        let checkoutResult = await runGitCommand(['checkout', '-f', targetBranch], clonePath, 120000, gitOpts);
 
         if (!checkoutResult.success) {
             // Try to create/track from remote if it exists but not locally
-            checkoutResult = await runGitCommand(['checkout', '-b', targetBranch, `origin/${targetBranch}`], clonePath);
+            checkoutResult = await runGitCommand(
+                ['checkout', '-b', targetBranch, `origin/${targetBranch}`],
+                clonePath,
+                120000,
+                gitOpts
+            );
 
             // If it still fails with "already exists", try one last force checkout
             if (!checkoutResult.success && checkoutResult.stderr.includes('already exists')) {
-                checkoutResult = await runGitCommand(['checkout', '-f', targetBranch], clonePath);
+                checkoutResult = await runGitCommand(['checkout', '-f', targetBranch], clonePath, 120000, gitOpts);
             }
 
             if (!checkoutResult.success) {
@@ -174,14 +254,43 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
 
         // Step 4: Hard reset to remote to ensure we have the latest code
         sendProgress('checkout', `Resetting to latest origin/${activeBranch}...`, 50);
-        const resetResult = await runGitCommand(['reset', '--hard', `origin/${activeBranch}`], clonePath);
+        const resetResult = await runGitCommand(
+            ['reset', '--hard', `origin/${activeBranch}`],
+            clonePath,
+            120000,
+            gitOpts
+        );
         if (!resetResult.success) {
             sendProgress('checkout', `Reset warning: ${resetResult.stderr}`, 52);
         }
 
         sendProgress('checkout', `Checked out and updated ${activeBranch}`, 55);
 
-        // Step 5: Install dependencies at clone root and/or nested Jest package (monorepos / inner package.json)
+        // Step 5: Trapeze UI — junctions to we-common, we-framework (and we-track for CoreUI)
+        const { setupTrapezeUIJunctions } = require('./trapezeJunctionSetup');
+        const junctionResult = await setupTrapezeUIJunctions(clonePath, {
+            credentials,
+            branch: activeBranch,
+            repoUrl,
+            runGitCommand,
+            onProgress: sendProgress,
+            logRepoName: repoName,
+            junctionSetupEnabled: options.junctionSetupEnabled
+        });
+        if (!junctionResult.skipped) {
+            if (junctionResult.warnings.length > 0) {
+                for (const w of junctionResult.warnings) {
+                    sendProgress('linking_deps', `Junction warning: ${w}`, 62);
+                }
+            }
+            sendProgress(
+                'linking_deps',
+                junctionResult.message,
+                junctionResult.success ? 65 : 63
+            );
+        }
+
+        // Step 6: Install dependencies at clone root and/or nested Jest package (monorepos / inner package.json)
         sendProgress('installing_deps', 'Checking dependencies...', 75);
         const { installPackages } = require('./nodeInstaller');
         const jestProjectRoot = findJestProjectRoot(clonePath);
@@ -207,9 +316,23 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
         }
         sendProgress('installing_deps', 'Dependencies ready', 85);
 
-        // Step 6: Run Jest from discovered project root (package.json + jest config / Jest dependency)
+        // Step 7: Run Jest from discovered project root (package.json + jest config / Jest dependency)
         sendProgress('testing', 'Running unit tests...', 90);
         const testResults = await runTests(clonePath, sendProgress, activeBranch);
+
+        if (!junctionResult.skipped && testResults) {
+            testResults.junctionSetup = {
+                profile: junctionResult.profile,
+                siblingBranches: junctionResult.siblingBranches || [],
+                warnings: junctionResult.warnings || [],
+                links: junctionResult.links || []
+            };
+            testResults.diagnostics = {
+                ...(testResults.diagnostics || {}),
+                siblingBranches: junctionResult.siblingBranches || [],
+                junctionWarnings: junctionResult.warnings || []
+            };
+        }
 
         sendProgress('complete', `Done! Branch: ${activeBranch}`, 100);
 
@@ -231,6 +354,52 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
 }
 
 /**
+ * Prefer Node 18 from nvm4w on Windows (Trapeze Jest suites target Node 18; Node 22 can crash workers before coverage flush).
+ * @returns {string}
+ */
+function resolveNodeExecutable() {
+    if (process.platform === 'win32') {
+        const nvmNode = path.join(process.env.NVM_SYMLINK || 'C:\\nvm4w\\nodejs', 'node.exe');
+        if (fs.existsSync(nvmNode)) {
+            return nvmNode;
+        }
+    }
+    return 'node';
+}
+
+/**
+ * Remove prior coverage artifacts so a failed run cannot leave stale json-summary data.
+ * @param {string} coverageDir
+ */
+function clearCoverageOutput(coverageDir) {
+    if (!fs.existsSync(coverageDir)) {
+        fs.mkdirSync(coverageDir, { recursive: true });
+        return;
+    }
+    const staleNames = [
+        'coverage-summary.json',
+        'coverage-final.json',
+        'clover.xml',
+        'lcov.info',
+        'jest-execution.log'
+    ];
+    try {
+        for (const name of staleNames) {
+            const full = path.join(coverageDir, name);
+            if (fs.existsSync(full)) {
+                fs.unlinkSync(full);
+            }
+        }
+        const lcovReport = path.join(coverageDir, 'lcov-report');
+        if (fs.existsSync(lcovReport)) {
+            fs.rmSync(lcovReport, { recursive: true, force: true });
+        }
+    } catch (err) {
+        console.warn(`[runTests] Failed to clear coverage artifacts in ${coverageDir}:`, err.message);
+    }
+}
+
+/**
  * Resolve how to invoke Jest for a package (local binary, node jest.js on Windows, or npx).
  * @param {string} projectRoot - Directory containing node_modules (Jest package root)
  * @param {string} [configPath] - Optional path to a specific jest config file
@@ -240,17 +409,21 @@ function resolveJestSpawn(projectRoot, configPath) {
     let jestBinPath = path.join(projectRoot, 'node_modules', '.bin', 'jest');
     let useNodeToExecute = false;
 
+    const jestJs = path.join(projectRoot, 'node_modules', 'jest', 'bin', 'jest.js');
     if (process.platform === 'win32') {
         const jestCmd = path.join(projectRoot, 'node_modules', '.bin', 'jest.cmd');
-        const jestJs = path.join(projectRoot, 'node_modules', 'jest', 'bin', 'jest.js');
-        if (fs.existsSync(jestCmd)) {
-            jestBinPath = jestCmd;
-        } else if (fs.existsSync(jestJs)) {
+        // Prefer node jest.js (matches npm run test:coverage:full heap wrapper via NODE_OPTIONS).
+        if (fs.existsSync(jestJs)) {
             jestBinPath = jestJs;
             useNodeToExecute = true;
+        } else if (fs.existsSync(jestCmd)) {
+            jestBinPath = jestCmd;
         } else if (!fs.existsSync(jestBinPath)) {
             jestBinPath = 'npx';
         }
+    } else if (fs.existsSync(jestJs)) {
+        jestBinPath = jestJs;
+        useNodeToExecute = true;
     } else if (!fs.existsSync(jestBinPath)) {
         jestBinPath = 'npx';
     }
@@ -266,6 +439,7 @@ function resolveJestSpawn(projectRoot, configPath) {
         '--coverageReporters=text',
         '--passWithNoTests',
         '--forceExit',
+        '--detectOpenHandles',
         '--maxWorkers=50%'
     ];
 
@@ -278,7 +452,7 @@ function resolveJestSpawn(projectRoot, configPath) {
     }
 
     if (useNodeToExecute) {
-        return { command: 'node', args: [jestBinPath, ...jestArgs] };
+        return { command: resolveNodeExecutable(), args: [jestBinPath, ...jestArgs] };
     }
     if (jestBinPath === 'npx') {
         return { command: 'npx', args: ['--yes', 'jest', ...jestArgs] };
@@ -294,239 +468,173 @@ function resolveJestSpawn(projectRoot, configPath) {
  * @param {string} [branch] - Active branch label for the summary file
  * @returns {Promise<object>} - Test results summary
  */
-function runTests(clonePath, sendProgress, branch) {
-    return new Promise((resolve) => {
-        const jestRoot = findJestProjectRoot(clonePath);
+async function runTests(clonePath, sendProgress, branch) {
+    const jestRoot = findJestProjectRoot(clonePath);
 
-        if (!jestRoot) {
-            resolve({
-                success: false,
-                hasCoverage: false,
-                message:
-                    'No Jest project found: need package.json with jest.config.* or Jest in dependencies under the clone.',
-                totalTests: 0,
-                passedTests: 0,
-                failedTests: 0,
-                testSuites: 0,
-                jestProjectRoot: null,
-                superDashboardSummaryPath: null
-            });
-            return;
+    if (!jestRoot) {
+        return {
+            success: false,
+            hasCoverage: false,
+            message:
+                'No Jest project found: need package.json with jest.config.* or Jest in dependencies under the clone.',
+            totalTests: 0,
+            passedTests: 0,
+            failedTests: 0,
+            testSuites: 0,
+            jestProjectRoot: null,
+            superDashboardSummaryPath: null
+        };
+    }
+
+    const coverageDir = path.join(jestRoot, 'coverage');
+    clearCoverageOutput(coverageDir);
+    const fullCoverageConfigPath = path.join(jestRoot, 'jest.config.full-coverage.js');
+    const useFullCoverageConfig = fs.existsSync(fullCoverageConfigPath);
+    const tempConfigPath = path.join(jestRoot, 'jest.config.js');
+    const backupConfigPath = path.join(jestRoot, 'jest.config.js.original');
+    const baseConfigPath = findNearestJestConfig(jestRoot) || path.join(jestRoot, 'jest.config.js');
+    const baseConfigExists = fs.existsSync(baseConfigPath);
+
+    const escapedBaseConfigPath = baseConfigExists
+        ? (baseConfigPath === tempConfigPath ? backupConfigPath : baseConfigPath).replace(/\\/g, '/')
+        : tempConfigPath.replace(/\\/g, '/');
+
+    if (!useFullCoverageConfig && fs.existsSync(tempConfigPath)) {
+        try {
+            fs.renameSync(tempConfigPath, backupConfigPath);
+        } catch (e) {
+            console.warn(`[runTests] Failed to backup base config: ${e.message}`);
         }
+    }
 
-        // Create a temporary Jest config to ensure consistent coverage collection for the complete project
-        // This disables bail and thresholds so failing tests don't block the report.
-        const coverageDir = path.join(jestRoot, 'coverage');
-        const tempConfigPath = path.join(jestRoot, 'jest.config.js');
-        const backupConfigPath = path.join(jestRoot, 'jest.config.js.original');
-        const baseConfigPath = findNearestJestConfig(jestRoot) || path.join(jestRoot, 'jest.config.js');
-        const baseConfigExists = fs.existsSync(baseConfigPath);
+    const coverageScope = resolveCollectCoverageScope(jestRoot);
+    const fallbackPatterns = buildCollectCoverageFromPatterns(coverageScope);
+    const fallbackPatternsJson = JSON.stringify(fallbackPatterns, null, 4).replace(/\n/g, '\n    ');
 
-        const escapedBaseConfigPath = baseConfigExists
-            ? (baseConfigPath === tempConfigPath ? backupConfigPath : baseConfigPath).replace(/\\/g, '/')
-            : tempConfigPath.replace(/\\/g, '/');
-
-        // Backup original jest.config.js if it exists
-        if (fs.existsSync(tempConfigPath)) {
-            try {
-                fs.renameSync(tempConfigPath, backupConfigPath);
-            } catch (e) {
-                console.warn(`[runTests] Failed to backup base config: ${e.message}`);
-            }
-        }
-
-        const coverageScope = resolveCollectCoverageScope(jestRoot);
-        const collectPatterns = buildCollectCoverageFromPatterns(coverageScope);
-        const patternsJson = JSON.stringify(collectPatterns, null, 4).replace(/\n/g, '\n    ');
-
-        const tempConfigContent = `
+    const tempConfigContent = `
 const fs = require('fs');
 
-module.exports = {
-    ...(function () {
-        const b = fs.existsSync('${escapedBaseConfigPath}') ? require('${escapedBaseConfigPath}') : {};
-        const keys = ['testEnvironment','setupFilesAfterEnv','setupFiles','moduleNameMapper','transform','transformIgnorePatterns','moduleFileExtensions','globals','testTimeout','snapshotSerializers','moduleDirectories','resolver','rootDir','roots','testMatch','testPathIgnorePatterns'];
-        const p = {};
-        keys.forEach(function (k) { if (b[k] !== undefined) p[k] = b[k]; });
-        return p;
-    })(),
-    bail: 0,
-    collectCoverage: true,
-    collectCoverageFrom: ${patternsJson},
-    coverageDirectory: '${coverageDir.replace(/\\/g, '/')}',
-    coverageReporters: ['json-summary', 'json'],
-    coverageThreshold: undefined,
-    coveragePathIgnorePatterns: []
-};
+module.exports = (function () {
+    const baseConfig = fs.existsSync('${escapedBaseConfigPath}') ? require('${escapedBaseConfigPath}') : {};
+    const { coverageThreshold, coveragePathIgnorePatterns, bail, ...rest } = baseConfig;
+    const collectCoverageFrom = baseConfig.collectCoverageFrom || ${fallbackPatternsJson};
+    return {
+        ...rest,
+        bail: 0,
+        collectCoverage: true,
+        collectCoverageFrom,
+        coverageDirectory: '${coverageDir.replace(/\\/g, '/')}',
+        coverageReporters: ['json-summary', 'json'],
+        coverageThreshold: undefined,
+        coveragePathIgnorePatterns: []
+    };
+})();
 `;
+
+    if (!useFullCoverageConfig) {
         try {
             fs.writeFileSync(tempConfigPath, tempConfigContent, 'utf8');
         } catch (err) {
             console.warn(`[runTests] Failed to write temp config: ${err.message}`);
         }
-
-        const testCandidates = findTestFiles(jestRoot);
-        const relRoot = path.relative(clonePath, jestRoot) || '.';
-        if (testCandidates.length === 0) {
-            sendProgress(
-                'testing',
-                `Jest root: ${relRoot} — no *.test/*.spec files found; running Jest with --passWithNoTests.`,
-                92
-            );
-        } else {
-            sendProgress(
-                'testing',
-                `Jest root: ${relRoot} — running ${testCandidates.length} test file(s)...`,
-                92
-            );
-        }
-
-        const { command, args: spawnArgs } = resolveJestSpawn(jestRoot, tempConfigPath);
-
-        console.log(`[gitOperations] Executing Jest: ${command} ${spawnArgs.join(' ')}`);
-
-        const jestChild = spawn(command, spawnArgs, {
-            cwd: jestRoot,
-            shell: true,
-            env: { ...process.env, CI: 'true' }
-        });
-
-        let stdout = '';
-        let stderr = '';
-
-        jestChild.stdout.on('data', (data) => {
-            stdout += data.toString();
-        });
-
-        jestChild.stderr.on('data', (data) => {
-            stderr += data.toString();
-        });
-
-        jestChild.on('close', (code) => {
-            const results = parseJestOutput(stdout + '\n' + stderr);
-            results.exitCode = code;
-            results.success = code === 0;
-            results.jestProjectRoot = jestRoot;
-
-            // Cleanup temp config and restore backup
-            try {
-                if (fs.existsSync(tempConfigPath)) {
-                    fs.unlinkSync(tempConfigPath);
-                }
-                if (fs.existsSync(backupConfigPath)) {
-                    fs.renameSync(backupConfigPath, tempConfigPath);
-                }
-            } catch (e) { /* ignore */ }
-
-            const coverageSummaryPath = path.join(jestRoot, 'coverage', 'coverage-summary.json');
-            const coverageJsonPath = path.join(jestRoot, 'coverage', 'coverage-final.json');
-
-            try {
-                if (fs.existsSync(coverageSummaryPath)) {
-                    const fullSummary = JSON.parse(fs.readFileSync(coverageSummaryPath, 'utf8'));
-                    
-                    // Detailed coverage for missing lines
-                    let detailedCoverage = {};
-                    if (fs.existsSync(coverageJsonPath)) {
-                        detailedCoverage = JSON.parse(fs.readFileSync(coverageJsonPath, 'utf8'));
-                    }
-
-                    results.summary = fullSummary.total;
-                    results.files = mapCoverageSummaryFiles(
-                        fullSummary,
-                        detailedCoverage,
-                        clonePath,
-                        jestRoot
-                    );
-                    
-                    // Keep for backward compatibility with writeSuperDashboardJestSummary if needed
-                    results.coverage = {
-                        total: results.summary,
-                        files: results.files
-                    };
-                    results.hasCoverage = true;
-                } else {
-                    results.hasCoverage = false;
-                }
-            } catch (covErr) {
-                console.warn('Failed to parse coverage summary:', covErr.message);
-            }
-
-            console.log(`[runTests] Writing super dashboard summary to: ${clonePath}`);
-            results.superDashboardSummaryPath = writeSuperDashboardJestSummary(
-                clonePath,
-                branch,
-                jestRoot,
-                results
-            );
-            console.log(`[runTests] Summary written: ${results.superDashboardSummaryPath || 'FAILED'}`);
-
-            resolve(results);
-        });
-
-        jestChild.on('error', (err) => {
-            // Cleanup temp config and restore backup
-            try {
-                if (fs.existsSync(tempConfigPath)) {
-                    fs.unlinkSync(tempConfigPath);
-                }
-                if (fs.existsSync(backupConfigPath)) {
-                    fs.renameSync(backupConfigPath, tempConfigPath);
-                }
-            } catch (e) { /* ignore */ }
-
-            resolve({
-                success: false,
-                hasCoverage: false,
-                message: `Failed to run tests: ${err.message}`,
-                totalTests: 0,
-                passedTests: 0,
-                failedTests: 0,
-                testSuites: 0,
-                jestProjectRoot: jestRoot,
-                superDashboardSummaryPath: null
-            });
-        });
-    });
-}
-
-/**
- * Find all test files recursively in a directory
- * @param {string} dir
- * @returns {string[]}
- */
-function findTestFiles(dir) {
-    const files = [];
-
-    function walk(currentDir) {
-        try {
-            const items = fs.readdirSync(currentDir);
-            for (const item of items) {
-                const fullPath = path.join(currentDir, item);
-                const stat = fs.statSync(fullPath);
-
-                if (stat.isDirectory()) {
-                    if (!['node_modules', 'coverage', 'dist', 'build', '.git'].includes(item)) {
-                        walk(fullPath);
-                    }
-                } else if (stat.isFile()) {
-                    if (
-                        item.endsWith('.test.js') ||
-                        item.endsWith('.spec.js') ||
-                        item.endsWith('.test.jsx') ||
-                        item.endsWith('.spec.jsx')
-                    ) {
-                        files.push(fullPath);
-                    }
-                }
-            }
-        } catch (err) {
-            // skip unreadable dirs
-        }
     }
 
-    walk(dir);
-    return files;
+    const testCandidates = findTestFiles(jestRoot);
+    const relRoot = path.relative(clonePath, jestRoot) || '.';
+    sendProgress(
+        'testing',
+        testCandidates.length === 0
+            ? `Jest root: ${relRoot} — no *.test/*.spec files found.`
+            : `Jest root: ${relRoot} — running ${testCandidates.length} test file(s) in isolation...`,
+        92
+    );
+
+    const jestConfigPath = useFullCoverageConfig ? fullCoverageConfigPath : tempConfigPath;
+    const jestLogRepo = path.basename(clonePath);
+
+    const restoreConfig = () => {
+        if (!useFullCoverageConfig) {
+            try {
+                if (fs.existsSync(tempConfigPath)) {
+                    fs.unlinkSync(tempConfigPath);
+                }
+                if (fs.existsSync(backupConfigPath)) {
+                    fs.renameSync(backupConfigPath, tempConfigPath);
+                }
+            } catch {
+                // ignore
+            }
+        }
+    };
+
+    try {
+        const isolated = await runResilientJestCoverage({
+            jestRoot,
+            jestConfigPath,
+            sendProgress,
+            logRepoName: jestLogRepo,
+            finalCoverageDir: coverageDir,
+            targetAnalysisPath: jestRoot,
+            sourceFileCount: testCandidates.length
+        });
+
+        restoreConfig();
+
+        const results = {
+            success: isolated.success,
+            hasCoverage: isolated.hasCoverage,
+            message: isolated.message,
+            exitCode: isolated.exitCode,
+            jestProjectRoot: jestRoot,
+            totalTests: isolated.totalTests,
+            passedTests: isolated.passedTests,
+            failedTests: isolated.failedTests,
+            testSuites: isolated.testSuites,
+            passedSuites: isolated.passedSuites,
+            failedSuites: isolated.failedSuites,
+            incompleteRun: isolated.incompleteRun,
+            failureSummary: isolated.failureSummary,
+            failedTestFiles: isolated.failedTestFiles,
+            diagnostics: isolated.diagnostics
+        };
+
+        if (isolated.hasCoverage && isolated.fullSummary) {
+            results.summary = isolated.fullSummary.total;
+            results.files = mapCoverageSummaryFiles(
+                isolated.fullSummary,
+                isolated.detailed || {},
+                clonePath,
+                jestRoot
+            );
+            results.coverage = {
+                total: results.summary,
+                files: results.files
+            };
+        }
+
+        console.log(`[runTests] Writing super dashboard summary to: ${clonePath}`);
+        results.superDashboardSummaryPath = writeSuperDashboardJestSummary(
+            clonePath,
+            branch,
+            jestRoot,
+            results
+        );
+
+        return results;
+    } catch (err) {
+        restoreConfig();
+        return {
+            success: false,
+            hasCoverage: false,
+            message: `Failed to run tests: ${err.message}`,
+            totalTests: 0,
+            passedTests: 0,
+            failedTests: 0,
+            testSuites: 0,
+            jestProjectRoot: jestRoot,
+            superDashboardSummaryPath: null
+        };
+    }
 }
 
 /**
@@ -754,10 +862,13 @@ async function pushCoverageReport(clonePath, branch, credentials) {
 
 module.exports = {
     cloneAndTest,
+    runGitCommand,
     runTests,
     findTestFiles,
     parseJestOutput,
     mapCoverageSummaryFiles,
     resolveJestSpawn,
+    resolveNodeExecutable,
+    clearCoverageOutput,
     pushCoverageReport
 };

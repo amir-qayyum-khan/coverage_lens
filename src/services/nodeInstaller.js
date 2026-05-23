@@ -3,6 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { logRepoCommand, resolveRepoNameFromCwd } = require('../utils/repoCommandLogger');
 
 const TARGET_NODE_VERSION = '16.20.2';
 
@@ -244,18 +245,39 @@ async function installPackages(projectRoot, onProgress) {
             onProgress('installing_deps', 'Installing dependencies (this may take a while)...', 75);
         }
 
+        const npmCommand = 'npm install --legacy-peer-deps';
+        const repoName = resolveRepoNameFromCwd(projectRoot);
+        const startedAt = Date.now();
+
         const npm = spawn('npm', ['install', '--legacy-peer-deps'], {
             cwd: projectRoot,
             shell: true
         });
 
+        let stdout = '';
         let stderr = '';
+
+        npm.stdout.on('data', (data) => {
+            stdout += data.toString();
+        });
 
         npm.stderr.on('data', (data) => {
             stderr += data.toString();
         });
 
         npm.on('close', (code) => {
+            logRepoCommand({
+                repoName,
+                commandType: 'npm',
+                command: npmCommand,
+                cwd: projectRoot,
+                success: code === 0,
+                exitCode: code,
+                stdout,
+                stderr,
+                durationMs: Date.now() - startedAt
+            });
+
             if (code === 0) {
                 resolve({
                     success: true,
@@ -270,6 +292,18 @@ async function installPackages(projectRoot, onProgress) {
         });
 
         npm.on('error', (err) => {
+            logRepoCommand({
+                repoName,
+                commandType: 'npm',
+                command: npmCommand,
+                cwd: projectRoot,
+                success: false,
+                exitCode: null,
+                stdout,
+                stderr,
+                spawnError: err.message,
+                durationMs: Date.now() - startedAt
+            });
             resolve({
                 success: false,
                 message: `Failed to run npm install: ${err.message}`

@@ -23,6 +23,7 @@ const {
     writeKnownClonePaths,
     appendKnownClonePath
 } = require('./src/services/superDashboardKnownClones');
+const { readAppPreferences, writeAppPreferences } = require('./src/services/appPreferences');
 const { listImmediateChildDirectories } = require('./src/services/superDashboardParentScan');
 
 let mainWindow;
@@ -151,7 +152,10 @@ ipcMain.handle('analyze:folder', async (event, folderPath) => {
 // Run Jest coverage
 ipcMain.handle('coverage:run', async (event, folderPath) => {
     try {
-        const results = await runCoverage(folderPath);
+        const prefs = readAppPreferences(app.getPath('userData'));
+        const results = await runCoverage(folderPath, {
+            junctionSetupEnabled: prefs.trapezeJunctionSetupEnabled
+        });
         return { success: true, data: results };
     } catch (error) {
         return { success: false, error: error.message };
@@ -311,6 +315,24 @@ ipcMain.handle('git:install', async () => {
 });
 
 // Known clone roots for Super Dashboard (disk in userData — shared across app instances; localStorage alone can be empty when multiple Electron processes use the same profile)
+ipcMain.handle('app:getPreferences', async () => {
+    try {
+        const data = readAppPreferences(app.getPath('userData'));
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('app:setPreferences', async (event, partial) => {
+    try {
+        const data = writeAppPreferences(app.getPath('userData'), partial || {});
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('superDashboard:getKnownClonePaths', async () => {
     try {
         const paths = readKnownClonePathsWithLegacyImport(app.getPath('userData'));
@@ -371,6 +393,7 @@ ipcMain.handle('superDashboard:browseReposParent', async () => {
 // Clone and Test an App
 ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentials, branch, progressKey }) => {
     try {
+        const prefs = readAppPreferences(app.getPath('userData'));
         const result = await cloneAndTest(
             repoUrl,
             targetDir,
@@ -382,7 +405,8 @@ ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentia
             },
             credentials,
             branch,
-            progressKey
+            progressKey,
+            { junctionSetupEnabled: prefs.trapezeJunctionSetupEnabled }
         );
         return {
             success: result.success,
