@@ -1,6 +1,6 @@
 {
     "name": "voyagerr-lens",
-    "version": "1.0.0",
+    "version": "1.2.0",
     "description": "Desktop application for analyzing code metrics and test coverage",
     "main": "main.js",
     "scripts": {
@@ -23,6 +23,8 @@
         "files": [
             "dist/**/*",
             "src/services/**/*",
+            "src/utils/**/*",
+            "src/data/**/*",
             "main.js",
             "preload.js",
             "package.json"

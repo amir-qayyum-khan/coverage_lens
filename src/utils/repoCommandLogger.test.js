@@ -3,7 +3,9 @@ const os = require('os');
 const path = require('path');
 
 const {
+    getLogsDirectory,
     getRepoLogFilePath,
+    isInsideAppAsar,
     classifyCommandError,
     beginRepoLogSession,
     logRepoCommand,
@@ -97,6 +99,15 @@ describe('repoCommandLogger', () => {
         const masked = maskCommandLine('git clone https://user:secret@host/repo.git');
         expect(masked).not.toContain('secret');
         expect(masked).toContain('****');
+    });
+
+    test('isInsideAppAsar detects packaged archive paths', () => {
+        expect(isInsideAppAsar('C:\\app\\resources\\app.asar\\src\\utils')).toBe(true);
+        expect(isInsideAppAsar('D:/work/code-analyzer/src/utils')).toBe(false);
+    });
+
+    test('getLogsDirectory uses CODE_ANALYZER_LOGS_DIR when set', () => {
+        expect(getLogsDirectory()).toBe(path.resolve(logsDir));
     });
 
     test('truncateLogTail keeps only the end of long text', () => {

@@ -7,14 +7,29 @@ const path = require('path');
  */
 
 /**
- * Resolve the logs directory (project root /logs).
+ * True when a path lives inside an Electron app.asar archive (not writable on disk).
+ * @param {string} resolvedPath
+ * @returns {boolean}
+ */
+function isInsideAppAsar(resolvedPath) {
+    return String(resolvedPath || '').replace(/\\/g, '/').includes('.asar/');
+}
+
+/**
+ * Resolve the logs directory (project root /logs in dev; userData/logs when packaged).
  * @returns {string}
  */
 function getLogsDirectory() {
     if (process.env.CODE_ANALYZER_LOGS_DIR) {
         return path.resolve(process.env.CODE_ANALYZER_LOGS_DIR);
     }
-    return path.join(__dirname, '..', '..', 'logs');
+    const projectLogs = path.resolve(path.join(__dirname, '..', '..', 'logs'));
+    // Packaged app: __dirname is under app.asar (a file). mkdir on app.asar/logs → ENOTDIR.
+    if (isInsideAppAsar(projectLogs) || isInsideAppAsar(__dirname)) {
+        const os = require('os');
+        return path.join(os.homedir(), 'voyagerr-lens', 'logs');
+    }
+    return projectLogs;
 }
 
 /**
@@ -292,6 +307,7 @@ function logRepoCommand(entry) {
 }
 
 module.exports = {
+    isInsideAppAsar,
     getLogsDirectory,
     getRepoLogFilePath,
     sanitizeRepoFileName,

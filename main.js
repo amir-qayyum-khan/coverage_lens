@@ -98,6 +98,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    // Repo command logs must not target app.asar (read-only archive → ENOTDIR on mkdir).
+    process.env.CODE_ANALYZER_LOGS_DIR = path.join(app.getPath('userData'), 'logs');
     createWindow();
     createMenu();
 });

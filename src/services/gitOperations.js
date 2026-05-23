@@ -166,14 +166,14 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
 
     const targetBranch = branch || 'master';
 
-    beginRepoLogSession(repoName, {
-        operation: 'cloneAndTest',
-        repoUrl: maskCommandLine(repoUrl),
-        targetDir,
-        branch: targetBranch
-    });
-
     try {
+        beginRepoLogSession(repoName, {
+            operation: 'cloneAndTest',
+            repoUrl: maskCommandLine(repoUrl),
+            targetDir,
+            branch: targetBranch
+        });
+
         // Step 1: Clone
         sendProgress('cloning', `Cloning ${repoName}...`, 10);
 
