@@ -1,14 +1,20 @@
 const fs = require('fs');
 const path = require('path');
-const { YOU_APPS, WE_APPS, repoFolderKeyFromUrl } = require('../data/appsCatalog');
+const {
+    buildJunctionsByRepoFolder,
+    normalizeAppJunctions,
+    repoFolderKeyFromUrl,
+    JUNCTIONS_CORE,
+    JUNCTIONS_STANDARD
+} = require('../data/appsCatalog');
 const { beginRepoLogSession, logRepoCommand } = require('../utils/repoCommandLogger');
 
-/** Junction profile: CoreUI gets we-track; other Trapeze UIs get we-common + we-framework only. */
+/** Derived labels for callers/tests: core = includes we-track; standard = we-common + we-framework. */
 const JUNCTION_PROFILE_CORE = 'core';
 const JUNCTION_PROFILE_STANDARD = 'standard';
 
-/** we-common and we-framework (all Trapeze UI apps with source/src junctions). */
-const TRAPEZE_JUNCTION_SPECS_STANDARD = [
+/** Registry of all known junction link specs. */
+const TRAPEZE_JUNCTION_SPECS = [
     {
         linkName: 'we-common',
         repoName: 'TrapezeDRTCommonUI',
@@ -18,12 +24,7 @@ const TRAPEZE_JUNCTION_SPECS_STANDARD = [
         linkName: 'we-framework',
         repoName: 'TrapezeFrameworkUI',
         targetSubPath: ['source', 'src']
-    }
-];
-
-/** Official Trapeze Core UI junctions (see Setup TrapezeCoreUI.bat). */
-const TRAPEZE_JUNCTION_SPECS = [
-    ...TRAPEZE_JUNCTION_SPECS_STANDARD,
+    },
     {
         linkName: 'we-track',
         repoName: 'TrapezeDRTWeTrackUI',
@@ -31,11 +32,16 @@ const TRAPEZE_JUNCTION_SPECS = [
     }
 ];
 
+const TRAPEZE_JUNCTION_SPECS_STANDARD = TRAPEZE_JUNCTION_SPECS.filter(
+    (s) => s.linkName === 'we-common' || s.linkName === 'we-framework'
+);
+
+const JUNCTION_SPEC_BY_LINK_NAME = Object.fromEntries(
+    TRAPEZE_JUNCTION_SPECS.map((spec) => [spec.linkName, spec])
+);
+
 const DEFAULT_GITEA_SSH_BASE = 'gitea@git.we-support.se:Trapeze';
 const CORE_UI_REPO_BASENAME = 'TrapezeDRTCoreUI';
-
-/** Junction/sm-link setup is on by default; caller or app preference can disable it. */
-const DEFAULT_TRAPEZE_JUNCTION_SETUP_ENABLED = true;
 
 /**
  * Fixed branch for a sibling when the UI repo uses developV2 (Framework has no developV2).
@@ -56,18 +62,17 @@ const JUNCTION_SOURCE_REPO_FOLDERS = new Set([
     'TrapezeDRTWeTrackUI'
 ]);
 
+/** Catalog folder → configured junction link names. */
+const JUNCTIONS_BY_REPO_FOLDER = buildJunctionsByRepoFolder();
+
 /**
- * Build repo folder name → junction profile from apps catalog.
+ * Legacy profile map derived from catalog junctions (core if we-track, else standard).
  * @returns {Record<string, 'core'|'standard'>}
  */
 function buildJunctionProfileByRepoFolder() {
     const map = {};
-    for (const app of [...YOU_APPS, ...WE_APPS]) {
-        const folder = repoFolderKeyFromUrl(app.url);
-        if (!folder || JUNCTION_SOURCE_REPO_FOLDERS.has(folder)) {
-            continue;
-        }
-        map[folder] = folder === CORE_UI_REPO_BASENAME ? JUNCTION_PROFILE_CORE : JUNCTION_PROFILE_STANDARD;
+    for (const [folder, links] of Object.entries(JUNCTIONS_BY_REPO_FOLDER)) {
+        map[folder] = links.includes('we-track') ? JUNCTION_PROFILE_CORE : JUNCTION_PROFILE_STANDARD;
     }
     return map;
 }
@@ -75,14 +80,26 @@ function buildJunctionProfileByRepoFolder() {
 const JUNCTION_PROFILE_BY_REPO_FOLDER = buildJunctionProfileByRepoFolder();
 
 /**
- * Junction link specs for a profile.
+ * Junction link specs for an ordered list of link names.
+ * @param {string[]} linkNames
+ * @returns {{ linkName: string, repoName: string, targetSubPath: string[] }[]}
+ */
+function getJunctionSpecsForLinks(linkNames) {
+    const names = normalizeAppJunctions(linkNames);
+    return names
+        .map((name) => JUNCTION_SPEC_BY_LINK_NAME[name])
+        .filter(Boolean)
+        .map((spec) => ({ ...spec }));
+}
+
+/**
+ * Junction link specs for a legacy profile name.
  * @param {'core'|'standard'} profile
  * @returns {{ linkName: string, repoName: string, targetSubPath: string[] }[]}
  */
 function getJunctionSpecsForProfile(profile) {
-    const specs =
-        profile === JUNCTION_PROFILE_CORE ? TRAPEZE_JUNCTION_SPECS : TRAPEZE_JUNCTION_SPECS_STANDARD;
-    return specs.map((spec) => ({ ...spec }));
+    const links = profile === JUNCTION_PROFILE_CORE ? JUNCTIONS_CORE : JUNCTIONS_STANDARD;
+    return getJunctionSpecsForLinks(links);
 }
 
 /**
@@ -90,7 +107,52 @@ function getJunctionSpecsForProfile(profile) {
  * @returns {{ linkName: string, repoName: string, targetSubPath: string[] }[]}
  */
 function getTrapezeSiblingRepos() {
-    return getJunctionSpecsForProfile(JUNCTION_PROFILE_CORE);
+    return getJunctionSpecsForLinks(JUNCTIONS_CORE);
+}
+
+/**
+ * Resolve configured junction link names for a clone (catalog first, then heuristics).
+ * @param {string} clonePath
+ * @param {string|null} [repoUrl]
+ * @returns {string[]}
+ */
+function getConfiguredJunctionLinkNames(clonePath, repoUrl = null) {
+    const base = path.basename(clonePath);
+    if (JUNCTIONS_BY_REPO_FOLDER[base]) {
+        return [...JUNCTIONS_BY_REPO_FOLDER[base]];
+    }
+
+    if (repoUrl) {
+        const fromUrl = repoFolderKeyFromUrl(repoUrl);
+        if (fromUrl && JUNCTIONS_BY_REPO_FOLDER[fromUrl]) {
+            return [...JUNCTIONS_BY_REPO_FOLDER[fromUrl]];
+        }
+    }
+
+    if (base.toLowerCase().includes('trapezedrtcoreui')) {
+        return [...JUNCTIONS_CORE];
+    }
+
+    const jestConfigCandidates = [
+        path.join(clonePath, 'source', 'jest.config.js'),
+        path.join(clonePath, 'jest.config.js')
+    ];
+    const hasJest = jestConfigCandidates.some((p) => fs.existsSync(p));
+    const gitignore = path.join(clonePath, '.gitignore');
+    if (!hasJest || !fs.existsSync(gitignore)) {
+        return [];
+    }
+
+    try {
+        const ignoreText = fs.readFileSync(gitignore, 'utf8');
+        if (!/we-common/i.test(ignoreText)) {
+            return [];
+        }
+    } catch {
+        return [];
+    }
+
+    return [...JUNCTIONS_STANDARD];
 }
 
 /**
@@ -100,38 +162,11 @@ function getTrapezeSiblingRepos() {
  * @returns {'core'|'standard'|null}
  */
 function getTrapezeJunctionProfile(clonePath, repoUrl = null) {
-    const base = path.basename(clonePath);
-    if (JUNCTION_PROFILE_BY_REPO_FOLDER[base]) {
-        return JUNCTION_PROFILE_BY_REPO_FOLDER[base];
-    }
-
-    if (repoUrl) {
-        const fromUrl = repoFolderKeyFromUrl(repoUrl);
-        if (fromUrl && JUNCTION_PROFILE_BY_REPO_FOLDER[fromUrl]) {
-            return JUNCTION_PROFILE_BY_REPO_FOLDER[fromUrl];
-        }
-    }
-
-    if (base.toLowerCase().includes('trapezedrtcoreui')) {
-        return JUNCTION_PROFILE_CORE;
-    }
-
-    const jestConfig = path.join(clonePath, 'source', 'jest.config.js');
-    const gitignore = path.join(clonePath, '.gitignore');
-    if (!fs.existsSync(jestConfig) || !fs.existsSync(gitignore)) {
+    const links = getConfiguredJunctionLinkNames(clonePath, repoUrl);
+    if (links.length === 0) {
         return null;
     }
-
-    try {
-        const ignoreText = fs.readFileSync(gitignore, 'utf8');
-        if (!/we-common/i.test(ignoreText)) {
-            return null;
-        }
-    } catch {
-        return null;
-    }
-
-    return JUNCTION_PROFILE_STANDARD;
+    return links.includes('we-track') ? JUNCTION_PROFILE_CORE : JUNCTION_PROFILE_STANDARD;
 }
 
 /**
@@ -212,34 +247,38 @@ async function readOriginUrl(clonePath, runGitCommand) {
 }
 
 /**
- * True when this clone should receive Trapeze UI junction links (any catalog UI app).
+ * True when this clone should receive Trapeze UI junction links.
  * @param {string} clonePath
  * @param {string|null} [repoUrl]
  * @returns {boolean}
  */
 function isTrapezeUIClone(clonePath, repoUrl = null) {
-    return getTrapezeJunctionProfile(clonePath, repoUrl) !== null;
+    return getConfiguredJunctionLinkNames(clonePath, repoUrl).length > 0;
 }
 
 /**
- * True when this clone is Trapeze Core UI (three junctions including we-track).
+ * True when this clone is Trapeze Core UI (junctions include we-track).
  * @param {string} clonePath
  * @param {string|null} [repoUrl]
  * @returns {boolean}
  */
 function isTrapezeCoreUIClone(clonePath, repoUrl = null) {
-    return getTrapezeJunctionProfile(clonePath, repoUrl) === JUNCTION_PROFILE_CORE;
+    return getConfiguredJunctionLinkNames(clonePath, repoUrl).includes('we-track');
 }
 
 /**
- * Resolve source/src directory under a Trapeze UI clone.
+ * Resolve app source dir under a Trapeze UI clone (CoreUI-style source/src or CRA-style src).
  * @param {string} clonePath
  * @returns {string|null}
  */
 function resolveTrapezeSrcDir(clonePath) {
-    const srcDir = path.join(clonePath, 'source', 'src');
-    if (fs.existsSync(srcDir)) {
-        return srcDir;
+    const nested = path.join(clonePath, 'source', 'src');
+    if (fs.existsSync(nested) && fs.statSync(nested).isDirectory()) {
+        return nested;
+    }
+    const rootSrc = path.join(clonePath, 'src');
+    if (fs.existsSync(rootSrc) && fs.statSync(rootSrc).isDirectory()) {
+        return rootSrc;
     }
     return null;
 }
@@ -522,19 +561,7 @@ function removeJunction(linkPath) {
 }
 
 /**
- * Resolve whether junction setup should run for this call.
- * @param {{ junctionSetupEnabled?: boolean }} options
- * @returns {boolean}
- */
-function resolveJunctionSetupEnabled(options = {}) {
-    if (typeof options.junctionSetupEnabled === 'boolean') {
-        return options.junctionSetupEnabled;
-    }
-    return DEFAULT_TRAPEZE_JUNCTION_SETUP_ENABLED;
-}
-
-/**
- * Set up Trapeze UI junctions under source/src (we-common, we-framework; we-track for CoreUI only).
+ * Set up Trapeze UI junctions under source/src or src (catalog-driven link names).
  * Clones missing sibling repos beside the UI clone when needed.
  *
  * @param {string} clonePath - Trapeze UI repository root
@@ -545,7 +572,6 @@ function resolveJunctionSetupEnabled(options = {}) {
  * @param {function} options.runGitCommand - git runner (from gitOperations)
  * @param {function} [options.onProgress] - (stage, message, percent) => void
  * @param {string} [options.logRepoName] - Display name for repo command log
- * @param {boolean} [options.junctionSetupEnabled] - When set, overrides default (on)
  * @returns {Promise<{ success: boolean, skipped: boolean, message: string, profile: string|null, links: object[], warnings: string[] }>}
  */
 async function setupTrapezeUIJunctions(clonePath, options = {}) {
@@ -562,24 +588,14 @@ async function setupTrapezeUIJunctions(clonePath, options = {}) {
     const links = [];
     const siblingBranches = [];
 
+    const linkNames = getConfiguredJunctionLinkNames(clonePath, repoUrl);
     const profile = getTrapezeJunctionProfile(clonePath, repoUrl);
 
-    if (!resolveJunctionSetupEnabled(options)) {
+    if (linkNames.length === 0) {
         return {
             success: true,
             skipped: true,
-            message: 'Trapeze junction setup is disabled',
-            profile,
-            links,
-            warnings,
-            siblingBranches
-        };
-    }
-    if (!profile) {
-        return {
-            success: true,
-            skipped: true,
-            message: 'Not a Trapeze UI clone; junction setup skipped',
+            message: 'No junctions configured for this app',
             profile: null,
             links,
             warnings,
@@ -616,7 +632,7 @@ async function setupTrapezeUIJunctions(clonePath, options = {}) {
         return {
             success: false,
             skipped: false,
-            message: 'source/src not found under Trapeze UI clone',
+            message: 'source/src or src not found under Trapeze UI clone',
             profile,
             links,
             warnings,
@@ -626,13 +642,14 @@ async function setupTrapezeUIJunctions(clonePath, options = {}) {
 
     const parentDir = path.dirname(clonePath);
     const originUrl = repoUrl || (await readOriginUrl(clonePath, runGitCommand));
-    const specs = getJunctionSpecsForProfile(profile);
+    const specs = getJunctionSpecsForLinks(linkNames);
     const linkLabels = specs.map((s) => s.linkName).join(', ');
 
     const uiLog = uiLogName || path.basename(clonePath);
     beginRepoLogSession(uiLog, {
         operation: 'setupTrapezeUIJunctions',
         profile,
+        junctions: linkNames,
         branch,
         parentDir
     });
@@ -783,16 +800,19 @@ async function setupTrapezeUIJunctions(clonePath, options = {}) {
 const setupTrapezeCoreUIJunctions = setupTrapezeUIJunctions;
 
 module.exports = {
-    DEFAULT_TRAPEZE_JUNCTION_SETUP_ENABLED,
     JUNCTION_PROFILE_CORE,
     JUNCTION_PROFILE_STANDARD,
     TRAPEZE_JUNCTION_SPECS,
     TRAPEZE_JUNCTION_SPECS_STANDARD,
+    JUNCTION_SPEC_BY_LINK_NAME,
+    JUNCTIONS_BY_REPO_FOLDER,
     JUNCTION_PROFILE_BY_REPO_FOLDER,
     JUNCTION_SOURCE_REPO_FOLDERS,
     SIBLING_BRANCH_BY_REPO,
     SIBLING_BRANCH_FALLBACKS,
+    getJunctionSpecsForLinks,
     getJunctionSpecsForProfile,
+    getConfiguredJunctionLinkNames,
     getTrapezeJunctionProfile,
     getTrapezeSiblingRepos,
     buildAuthenticatedRepoUrl,
@@ -807,7 +827,6 @@ module.exports = {
     createJunction,
     removeJunction,
     ensureSiblingRepo,
-    resolveJunctionSetupEnabled,
     setupTrapezeUIJunctions,
     setupTrapezeCoreUIJunctions
 };

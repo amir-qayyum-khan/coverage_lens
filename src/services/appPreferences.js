@@ -4,10 +4,9 @@ const fs = require('fs');
 const FILE_NAME = 'app-preferences.json';
 const PREFERENCES_VERSION = 1;
 
-/** Default app preferences — junction setup on for Trapeze UI clones (toggle in Super Dashboard to disable). */
+/** Default app preferences (junctions are configured per app in appsCatalog). */
 const DEFAULT_APP_PREFERENCES = {
-    version: PREFERENCES_VERSION,
-    trapezeJunctionSetupEnabled: true
+    version: PREFERENCES_VERSION
 };
 
 /**
@@ -22,15 +21,12 @@ function appPreferencesFilePath(userDataPath) {
 /**
  * Normalize raw JSON into a valid preferences object.
  * @param {unknown} raw
- * @returns {{ version: number, trapezeJunctionSetupEnabled: boolean }}
+ * @returns {{ version: number }}
  */
 function normalizeAppPreferences(raw) {
     const base = { ...DEFAULT_APP_PREFERENCES };
     if (!raw || typeof raw !== 'object') {
         return base;
-    }
-    if (typeof raw.trapezeJunctionSetupEnabled === 'boolean') {
-        base.trapezeJunctionSetupEnabled = raw.trapezeJunctionSetupEnabled;
     }
     if (typeof raw.version === 'number' && Number.isFinite(raw.version)) {
         base.version = raw.version;
@@ -41,7 +37,7 @@ function normalizeAppPreferences(raw) {
 /**
  * Read app preferences from userData (defaults when file missing or invalid).
  * @param {string} userDataPath
- * @returns {{ version: number, trapezeJunctionSetupEnabled: boolean }}
+ * @returns {{ version: number }}
  */
 function readAppPreferences(userDataPath) {
     const fp = appPreferencesFilePath(userDataPath);
@@ -59,8 +55,8 @@ function readAppPreferences(userDataPath) {
 /**
  * Merge partial preferences and persist to userData.
  * @param {string} userDataPath
- * @param {Partial<{ trapezeJunctionSetupEnabled: boolean }>} partial
- * @returns {{ version: number, trapezeJunctionSetupEnabled: boolean }}
+ * @param {Partial<{ version: number }>} partial
+ * @returns {{ version: number }}
  */
 function writeAppPreferences(userDataPath, partial) {
     const current = readAppPreferences(userDataPath);
@@ -72,21 +68,11 @@ function writeAppPreferences(userDataPath, partial) {
     return next;
 }
 
-/**
- * Whether Trapeze junction (sm-link) setup should run.
- * @param {string} userDataPath
- * @returns {boolean}
- */
-function isTrapezeJunctionSetupEnabled(userDataPath) {
-    return readAppPreferences(userDataPath).trapezeJunctionSetupEnabled === true;
-}
-
 module.exports = {
     FILE_NAME,
     DEFAULT_APP_PREFERENCES,
     appPreferencesFilePath,
     normalizeAppPreferences,
     readAppPreferences,
-    writeAppPreferences,
-    isTrapezeJunctionSetupEnabled
+    writeAppPreferences
 };

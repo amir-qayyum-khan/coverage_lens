@@ -1,13 +1,12 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-
 const {
     DEFAULT_APP_PREFERENCES,
+    appPreferencesFilePath,
     readAppPreferences,
     writeAppPreferences,
-    isTrapezeJunctionSetupEnabled,
-    appPreferencesFilePath
+    normalizeAppPreferences
 } = require('./appPreferences');
 
 describe('appPreferences', () => {
@@ -25,47 +24,26 @@ describe('appPreferences', () => {
         }
     });
 
-    test('readAppPreferences returns defaults when file missing', () => {
-        const prefs = readAppPreferences(userDataPath);
-        expect(prefs).toEqual(DEFAULT_APP_PREFERENCES);
-        expect(prefs.trapezeJunctionSetupEnabled).toBe(true);
+    test('defaults have version only (junctions live in appsCatalog)', () => {
+        expect(DEFAULT_APP_PREFERENCES).toEqual({ version: 1 });
+        expect(readAppPreferences(userDataPath)).toEqual({ version: 1 });
     });
 
-    test('writeAppPreferences merges and persists', () => {
-        const written = writeAppPreferences(userDataPath, { trapezeJunctionSetupEnabled: true });
-        expect(written.trapezeJunctionSetupEnabled).toBe(true);
+    test('write and read round-trip', () => {
+        const written = writeAppPreferences(userDataPath, {});
         expect(written.version).toBe(1);
-
-        const reread = readAppPreferences(userDataPath);
-        expect(reread.trapezeJunctionSetupEnabled).toBe(true);
-
-        const fp = appPreferencesFilePath(userDataPath);
-        expect(fs.existsSync(fp)).toBe(true);
+        expect(fs.existsSync(appPreferencesFilePath(userDataPath))).toBe(true);
+        expect(readAppPreferences(userDataPath).version).toBe(1);
     });
 
-    test('writeAppPreferences preserves other fields when merging', () => {
-        writeAppPreferences(userDataPath, { trapezeJunctionSetupEnabled: true });
-        const updated = writeAppPreferences(userDataPath, {});
-        expect(updated.trapezeJunctionSetupEnabled).toBe(true);
+    test('normalize ignores removed trapezeJunctionSetupEnabled key', () => {
+        expect(
+            normalizeAppPreferences({ version: 2, trapezeJunctionSetupEnabled: false })
+        ).toEqual({ version: 2 });
     });
 
-    test('readAppPreferences falls back on invalid JSON', () => {
-        const fp = appPreferencesFilePath(userDataPath);
-        fs.writeFileSync(fp, '{ not json', 'utf8');
-        const prefs = readAppPreferences(userDataPath);
-        expect(prefs.trapezeJunctionSetupEnabled).toBe(true);
-    });
-
-    test('readAppPreferences ignores non-boolean trapezeJunctionSetupEnabled', () => {
-        const fp = appPreferencesFilePath(userDataPath);
-        fs.writeFileSync(fp, JSON.stringify({ trapezeJunctionSetupEnabled: 'yes' }), 'utf8');
-        const prefs = readAppPreferences(userDataPath);
-        expect(prefs.trapezeJunctionSetupEnabled).toBe(true);
-    });
-
-    test('isTrapezeJunctionSetupEnabled reflects stored preference', () => {
-        expect(isTrapezeJunctionSetupEnabled(userDataPath)).toBe(true);
-        writeAppPreferences(userDataPath, { trapezeJunctionSetupEnabled: false });
-        expect(isTrapezeJunctionSetupEnabled(userDataPath)).toBe(false);
+    test('readAppPreferences recovers from invalid JSON', () => {
+        fs.writeFileSync(appPreferencesFilePath(userDataPath), '{not-json', 'utf8');
+        expect(readAppPreferences(userDataPath)).toEqual({ version: 1 });
     });
 });

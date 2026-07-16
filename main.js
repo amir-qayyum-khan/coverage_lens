@@ -154,10 +154,7 @@ ipcMain.handle('analyze:folder', async (event, folderPath) => {
 // Run Jest coverage
 ipcMain.handle('coverage:run', async (event, folderPath) => {
     try {
-        const prefs = readAppPreferences(app.getPath('userData'));
-        const results = await runCoverage(folderPath, {
-            junctionSetupEnabled: prefs.trapezeJunctionSetupEnabled
-        });
+        const results = await runCoverage(folderPath);
         return { success: true, data: results };
     } catch (error) {
         return { success: false, error: error.message };
@@ -395,7 +392,6 @@ ipcMain.handle('superDashboard:browseReposParent', async () => {
 // Clone and Test an App
 ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentials, branch, progressKey }) => {
     try {
-        const prefs = readAppPreferences(app.getPath('userData'));
         const result = await cloneAndTest(
             repoUrl,
             targetDir,
@@ -407,8 +403,7 @@ ipcMain.handle('app:cloneAndTest', async (event, { repoUrl, targetDir, credentia
             },
             credentials,
             branch,
-            progressKey,
-            { junctionSetupEnabled: prefs.trapezeJunctionSetupEnabled }
+            progressKey
         );
         return {
             success: result.success,

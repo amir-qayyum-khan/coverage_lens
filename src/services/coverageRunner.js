@@ -571,7 +571,7 @@ async function readCloneBranch(cloneRoot, runGitCommand) {
 /**
  * Run Jest with coverage on a folder
  * @param {string} folderPath - Path to the folder containing cases/files to analyze
- * @param {{ junctionSetupEnabled?: boolean }} [options] - App options (junction/sm-link setup)
+ * @param {object} [options] - Reserved for future coverage options
  * @returns {Promise<object>} - Coverage results
  */
 async function runCoverage(folderPath, options = {}) {
@@ -607,8 +607,7 @@ async function runCoverage(folderPath, options = {}) {
         junctionSetup = await setupTrapezeUIJunctions(cloneRoot, {
             branch: uiBranch,
             runGitCommand,
-            logRepoName: path.basename(cloneRoot),
-            junctionSetupEnabled: options.junctionSetupEnabled
+            logRepoName: path.basename(cloneRoot)
         });
         if (junctionSetup.warnings?.length) {
             console.warn('[CoverageRunner] Junction warnings:', junctionSetup.warnings.join('; '));

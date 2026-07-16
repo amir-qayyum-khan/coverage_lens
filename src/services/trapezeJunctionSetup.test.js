@@ -1,13 +1,17 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { YOU_APPS, WE_APPS, repoFolderKeyFromUrl, normalizeAppJunctions } = require('../data/appsCatalog');
 
 const {
     JUNCTION_PROFILE_BY_REPO_FOLDER,
+    JUNCTIONS_BY_REPO_FOLDER,
     JUNCTION_PROFILE_CORE,
     JUNCTION_PROFILE_STANDARD,
     SIBLING_BRANCH_BY_REPO,
     getJunctionSpecsForProfile,
+    getJunctionSpecsForLinks,
+    getConfiguredJunctionLinkNames,
     getTrapezeSiblingRepos,
     getTrapezeJunctionProfile,
     deriveSiblingRepoUrl,
@@ -50,19 +54,37 @@ describe('trapezeJunctionSetup', () => {
         expect(repos.map((r) => r.linkName)).toEqual(['we-common', 'we-framework']);
     });
 
-    describe('JUNCTION_PROFILE_BY_REPO_FOLDER', () => {
-        test('maps catalog Trapeze UI apps to core or standard', () => {
+    describe('catalog junctions', () => {
+        test('maps configured catalog apps to core or standard profiles', () => {
             expect(JUNCTION_PROFILE_BY_REPO_FOLDER.TrapezeDRTCoreUI).toBe(JUNCTION_PROFILE_CORE);
             expect(JUNCTION_PROFILE_BY_REPO_FOLDER.TrapezeDRTYouBookUI).toBe(JUNCTION_PROFILE_STANDARD);
-            expect(JUNCTION_PROFILE_BY_REPO_FOLDER.TrapezeDRTPortalsLaunchpadUI).toBe(
-                JUNCTION_PROFILE_STANDARD
-            );
             expect(JUNCTION_PROFILE_BY_REPO_FOLDER.TrapezeDRTBatchSchedulingAgentUI).toBe(
                 JUNCTION_PROFILE_STANDARD
             );
+            expect(JUNCTION_PROFILE_BY_REPO_FOLDER.TrapezeDRTPortalsLaunchpadUI).toBeUndefined();
             expect(JUNCTION_PROFILE_BY_REPO_FOLDER.TrapezeDRTCommonUI).toBeUndefined();
             expect(JUNCTION_PROFILE_BY_REPO_FOLDER.TrapezeFrameworkUI).toBeUndefined();
             expect(JUNCTION_PROFILE_BY_REPO_FOLDER.TrapezeDRTWeTrackUI).toBeUndefined();
+        });
+
+        test('JUNCTIONS_BY_REPO_FOLDER matches catalog junctions arrays', () => {
+            for (const app of [...YOU_APPS, ...WE_APPS]) {
+                const folder = repoFolderKeyFromUrl(app.url);
+                const expected = normalizeAppJunctions(app.junctions);
+                if (expected.length === 0) {
+                    expect(JUNCTIONS_BY_REPO_FOLDER[folder]).toBeUndefined();
+                } else {
+                    expect(JUNCTIONS_BY_REPO_FOLDER[folder]).toEqual(expected);
+                    expect(getConfiguredJunctionLinkNames(path.join(tmpDir, folder))).toEqual(
+                        expected
+                    );
+                }
+            }
+        });
+
+        test('getJunctionSpecsForLinks resolves registry entries', () => {
+            const specs = getJunctionSpecsForLinks(['we-common', 'we-track', 'nope']);
+            expect(specs.map((s) => s.linkName)).toEqual(['we-common', 'we-track']);
         });
     });
 
@@ -179,11 +201,22 @@ describe('trapezeJunctionSetup', () => {
         });
     });
 
-    test('resolveTrapezeSrcDir returns source/src when present', () => {
-        const clonePath = path.join(tmpDir, 'TrapezeDRTCoreUI');
-        const srcDir = path.join(clonePath, 'source', 'src');
-        fs.mkdirSync(srcDir, { recursive: true });
-        expect(resolveTrapezeSrcDir(clonePath)).toBe(srcDir);
+    describe('resolveTrapezeSrcDir', () => {
+        test('prefers source/src when present', () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTCoreUI');
+            const nested = path.join(clonePath, 'source', 'src');
+            const rootSrc = path.join(clonePath, 'src');
+            fs.mkdirSync(nested, { recursive: true });
+            fs.mkdirSync(rootSrc, { recursive: true });
+            expect(resolveTrapezeSrcDir(clonePath)).toBe(nested);
+        });
+
+        test('falls back to root src when source/src missing', () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTYouBookUI');
+            const rootSrc = path.join(clonePath, 'src');
+            fs.mkdirSync(rootSrc, { recursive: true });
+            expect(resolveTrapezeSrcDir(clonePath)).toBe(rootSrc);
+        });
     });
 
     describe('createJunction', () => {
@@ -218,20 +251,17 @@ describe('trapezeJunctionSetup', () => {
     });
 
     describe('setupTrapezeUIJunctions', () => {
-        test('skips when junction setup is explicitly disabled', async () => {
-            const clonePath = path.join(tmpDir, 'TrapezeDRTCoreUI');
-            fs.mkdirSync(path.join(clonePath, 'source', 'src'), { recursive: true });
+        test('skips when catalog has no junctions for the app', async () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTPortalsLaunchpadUI');
+            fs.mkdirSync(path.join(clonePath, 'src'), { recursive: true });
 
             const runGitCommand = jest.fn();
-            const result = await setupTrapezeUIJunctions(clonePath, {
-                runGitCommand,
-                junctionSetupEnabled: false
-            });
+            const result = await setupTrapezeUIJunctions(clonePath, { runGitCommand });
 
             expect(result.skipped).toBe(true);
             expect(result.success).toBe(true);
-            expect(result.message).toMatch(/disabled/i);
-            expect(result.profile).toBe(JUNCTION_PROFILE_CORE);
+            expect(result.message).toMatch(/no junctions configured/i);
+            expect(result.profile).toBeNull();
             expect(result.links).toHaveLength(0);
             expect(runGitCommand).not.toHaveBeenCalled();
         });
@@ -247,6 +277,7 @@ describe('trapezeJunctionSetup', () => {
             expect(result.skipped).toBe(true);
             expect(result.success).toBe(true);
             expect(result.profile).toBeNull();
+            expect(result.message).toMatch(/no junctions configured/i);
         });
 
         test('creates three junctions for CoreUI when sibling targets exist', async () => {
@@ -279,7 +310,6 @@ describe('trapezeJunctionSetup', () => {
                 branch: 'developV2',
                 repoUrl: 'gitea@git.we-support.se:Trapeze/TrapezeDRTCoreUI.git',
                 runGitCommand,
-                junctionSetupEnabled: true
             });
 
             expect(result.skipped).toBe(false);
@@ -329,7 +359,6 @@ describe('trapezeJunctionSetup', () => {
             const result = await setupTrapezeUIJunctions(clonePath, {
                 branch: 'developV2',
                 runGitCommand,
-                junctionSetupEnabled: true
             });
 
             const frameworkSibling = result.siblingBranches.find(
@@ -376,21 +405,20 @@ describe('trapezeJunctionSetup', () => {
             const result = await setupTrapezeUIJunctions(clonePath, {
                 branch: 'developV2',
                 runGitCommand,
-                junctionSetupEnabled: true
             });
 
             expect(result.warnings.some((w) => /re-pointed/i.test(w))).toBe(true);
             expect(junctionPointsToTarget(linkPath, commonTarget)).toBe(true);
         });
 
-        test('creates two junctions for YouBook UI when sibling targets exist', async () => {
+        test('creates two junctions for YouBook UI under root src when sibling targets exist', async () => {
             if (process.platform !== 'win32') {
                 return;
             }
 
             const parent = tmpDir;
             const clonePath = path.join(parent, 'TrapezeDRTYouBookUI');
-            fs.mkdirSync(path.join(clonePath, 'source', 'src'), { recursive: true });
+            fs.mkdirSync(path.join(clonePath, 'src'), { recursive: true });
 
             for (const spec of getJunctionSpecsForProfile(JUNCTION_PROFILE_STANDARD)) {
                 const target = path.join(parent, spec.repoName, ...spec.targetSubPath);
@@ -402,17 +430,16 @@ describe('trapezeJunctionSetup', () => {
             const result = await setupTrapezeUIJunctions(clonePath, {
                 branch: 'develop',
                 repoUrl: 'gitea@git.we-support.se:Trapeze/TrapezeDRTYouBookUI.git',
-                runGitCommand,
-                junctionSetupEnabled: true
+                runGitCommand
             });
 
             expect(result.skipped).toBe(false);
             expect(result.profile).toBe(JUNCTION_PROFILE_STANDARD);
             expect(result.links).toHaveLength(2);
             expect(result.links.every((l) => l.success)).toBe(true);
-            expect(
-                fs.existsSync(path.join(clonePath, 'source', 'src', 'we-track'))
-            ).toBe(false);
+            expect(fs.existsSync(path.join(clonePath, 'src', 'we-common'))).toBe(true);
+            expect(fs.existsSync(path.join(clonePath, 'src', 'we-framework'))).toBe(true);
+            expect(fs.existsSync(path.join(clonePath, 'src', 'we-track'))).toBe(false);
         });
 
         test('setupTrapezeCoreUIJunctions is an alias', async () => {
@@ -439,7 +466,6 @@ describe('trapezeJunctionSetup', () => {
             const result = await setupTrapezeUIJunctions(clonePath, {
                 branch: 'develop',
                 runGitCommand,
-                junctionSetupEnabled: true
             });
 
             expect(result.warnings.length).toBeGreaterThan(0);

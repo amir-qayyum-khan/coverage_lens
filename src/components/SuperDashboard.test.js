@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import SuperDashboard from './SuperDashboard';
 
 describe('SuperDashboard', () => {
@@ -8,41 +8,15 @@ describe('SuperDashboard', () => {
     beforeEach(() => {
         mockFetchRemoteCoverage.mockClear();
         window.electronAPI = {
-            fetchRemoteCoverage: mockFetchRemoteCoverage,
-            getAppPreferences: jest.fn().mockResolvedValue({
-                success: true,
-                data: { trapezeJunctionSetupEnabled: true }
-            }),
-            setAppPreferences: jest.fn().mockResolvedValue({
-                success: true,
-                data: { trapezeJunctionSetupEnabled: false }
-            })
+            fetchRemoteCoverage: mockFetchRemoteCoverage
         };
     });
 
-    test('renders junction toggle checked by default', async () => {
+    test('does not render junction setup toggle', async () => {
         render(<SuperDashboard knownClonePaths={[]} />);
-
-        const toggle = await screen.findByRole('checkbox', {
-            name: /enable trapeze junction links/i
-        });
-        expect(toggle).toBeChecked();
-    });
-
-    test('persists junction toggle when unchecked', async () => {
-        render(<SuperDashboard knownClonePaths={[]} />);
-
-        const toggle = await screen.findByRole('checkbox', {
-            name: /enable trapeze junction links/i
-        });
-        fireEvent.click(toggle);
-
-        await waitFor(() => {
-            expect(window.electronAPI.setAppPreferences).toHaveBeenCalledWith({
-                trapezeJunctionSetupEnabled: false
-            });
-        });
-        expect(toggle).not.toBeChecked();
+        expect(await screen.findByRole('button', { name: /refresh/i })).toBeInTheDocument();
+        expect(screen.queryByRole('checkbox', { name: /junction/i })).not.toBeInTheDocument();
+        expect(screen.queryByText(/Enable Trapeze junction links/i)).not.toBeInTheDocument();
     });
 
     test('renders refresh button', async () => {

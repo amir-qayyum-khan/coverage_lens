@@ -133,7 +133,7 @@ function runGitCommand(args, cwd, timeout = 120000, options = {}) {
  * @param {object} [credentials] - Git credentials {username, token}
  * @param {string} [branch] - Branch to checkout (defaults to master)
  * @param {string} [progressKey] - UI key for progress events (must match Dashboard card id, e.g. catalog app name)
- * @param {{ junctionSetupEnabled?: boolean }} [options] - App options (junction/sm-link setup)
+ * @param {object} [options] - Reserved for future clone options
  * @returns {Promise<{success: boolean, message: string, branch: string|null, testResults: object|null}>}
  */
 async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch, progressKey, options = {}) {
@@ -274,10 +274,12 @@ async function cloneAndTest(repoUrl, targetDir, onProgress, credentials, branch,
             repoUrl,
             runGitCommand,
             onProgress: sendProgress,
-            logRepoName: repoName,
-            junctionSetupEnabled: options.junctionSetupEnabled
+            logRepoName: repoName
         });
-        if (!junctionResult.skipped) {
+        // Always surface junction outcome (including skips) so You/We apps do not look silently unlinked
+        if (junctionResult.skipped) {
+            sendProgress('linking_deps', junctionResult.message || 'Junction setup skipped', 65);
+        } else {
             if (junctionResult.warnings.length > 0) {
                 for (const w of junctionResult.warnings) {
                     sendProgress('linking_deps', `Junction warning: ${w}`, 62);

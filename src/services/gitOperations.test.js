@@ -233,10 +233,11 @@ describe('gitOperations', () => {
             });
 
             try {
+                const progressEvents = [];
                 await cloneAndTest(
                     'https://git.example/Trapeze/TrapezeDRTCoreUI.git',
                     targetDir,
-                    () => {},
+                    (p) => progressEvents.push(p),
                     null,
                     'develop',
                     'CoreUI'
@@ -248,6 +249,69 @@ describe('gitOperations', () => {
                 expect(calledClonePath).toBe(clonePath);
                 expect(opts.branch).toBe('develop');
                 expect(typeof opts.runGitCommand).toBe('function');
+
+                // Skipped junctions must still report linking_deps (not silent)
+                expect(
+                    progressEvents.some(
+                        (e) => e.stage === 'linking_deps' && /skipped/i.test(e.message)
+                    )
+                ).toBe(true);
+            } finally {
+                fs.rmSync(targetDir, { recursive: true, force: true });
+            }
+        });
+
+        test('reports linking_deps when junction setup runs successfully', async () => {
+            const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clone-target-'));
+            const clonePath = path.join(targetDir, 'TrapezeDRTYouBookUI');
+            fs.mkdirSync(clonePath, { recursive: true });
+            fs.writeFileSync(path.join(clonePath, 'package.json'), '{}');
+            findJestProjectRoot.mockReturnValue(clonePath);
+            setupTrapezeUIJunctions.mockResolvedValueOnce({
+                success: true,
+                skipped: false,
+                message: 'Junctions ready',
+                profile: 'standard',
+                links: [{ success: true }, { success: true }],
+                warnings: []
+            });
+
+            spawn.mockImplementation((cmd, args) => {
+                if (cmd === 'git') {
+                    const proc = new EventEmitter();
+                    proc.stdout = new EventEmitter();
+                    proc.stderr = new EventEmitter();
+                    process.nextTick(() => {
+                        if (args[0] === 'remote') {
+                            proc.stdout.emit(
+                                'data',
+                                Buffer.from('https://git.example/Trapeze/TrapezeDRTYouBookUI.git')
+                            );
+                        }
+                        proc.emit('close', 0);
+                    });
+                    return proc;
+                }
+                return mockJestChild(0, 'Tests: 1 passed, 1 total\n');
+            });
+
+            try {
+                const progressEvents = [];
+                await cloneAndTest(
+                    'https://git.example/Trapeze/TrapezeDRTYouBookUI.git',
+                    targetDir,
+                    (p) => progressEvents.push(p),
+                    null,
+                    'develop',
+                    'YouBookUI'
+                );
+
+                expect(setupTrapezeUIJunctions).toHaveBeenCalled();
+                expect(
+                    progressEvents.some(
+                        (e) => e.stage === 'linking_deps' && e.message === 'Junctions ready'
+                    )
+                ).toBe(true);
             } finally {
                 fs.rmSync(targetDir, { recursive: true, force: true });
             }
