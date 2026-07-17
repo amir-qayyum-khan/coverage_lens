@@ -217,6 +217,22 @@ describe('trapezeJunctionSetup', () => {
             fs.mkdirSync(rootSrc, { recursive: true });
             expect(resolveTrapezeSrcDir(clonePath)).toBe(rootSrc);
         });
+
+        test('uses catalog sourceRoot for DriverCom (source/UI/src)', () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTDriverCom');
+            const uiSrc = path.join(clonePath, 'source', 'UI', 'src');
+            const backend = path.join(clonePath, 'source', 'Backend');
+            fs.mkdirSync(uiSrc, { recursive: true });
+            fs.mkdirSync(backend, { recursive: true });
+            expect(resolveTrapezeSrcDir(clonePath)).toBe(uiSrc);
+        });
+
+        test('falls back to source/UI/src when catalog folder name differs', () => {
+            const clonePath = path.join(tmpDir, 'SomeOtherClone');
+            const uiSrc = path.join(clonePath, 'source', 'UI', 'src');
+            fs.mkdirSync(uiSrc, { recursive: true });
+            expect(resolveTrapezeSrcDir(clonePath)).toBe(uiSrc);
+        });
     });
 
     describe('createJunction', () => {

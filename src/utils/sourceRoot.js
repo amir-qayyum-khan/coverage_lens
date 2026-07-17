@@ -3,9 +3,16 @@ const fs = require('fs');
 
 /**
  * Relative segments from repo root to the main JS source tree (first match wins).
- * Covers CRA-style `src/` and CoreUI-style `source/src/`.
+ * Covers CRA-style `src/`, CoreUI-style `source/src/`, and DriverCom-style `source/UI/src/`.
  */
-const SOURCE_ROOT_RELATIVE_CANDIDATES = ['src', path.join('source', 'src')];
+const SOURCE_ROOT_RELATIVE_CANDIDATES = [
+    'src',
+    path.join('source', 'src'),
+    path.join('source', 'UI', 'src')
+];
+
+/** Relative paths treated as the full source tree for analyzer targeting / batching. */
+const FULL_SOURCE_TREE_SCOPES = new Set(['src', 'source/src', 'source/UI/src']);
 
 /**
  * Find the primary source directory under a base path.
@@ -94,7 +101,7 @@ function resolveAnalyzerTargetPath(folderPath) {
 
     if (rootResolved.startsWith(folderResolved + path.sep)) {
         const relFromFolder = path.relative(folderResolved, rootResolved).split(path.sep).join('/');
-        if (relFromFolder === 'src' || relFromFolder === 'source/src') {
+        if (FULL_SOURCE_TREE_SCOPES.has(relFromFolder)) {
             console.log(`[CodeAnalyzer] Source tree detected, analyzing: ${sourceRoot}`);
             return sourceRoot;
         }
@@ -114,7 +121,7 @@ function resolveAnalyzerTargetPath(folderPath) {
  */
 function isFullSourceTreeScope(scopeRelativeToRoot) {
     const scope = (scopeRelativeToRoot || '').replace(/\\/g, '/');
-    return scope === 'src' || scope === 'source/src';
+    return FULL_SOURCE_TREE_SCOPES.has(scope);
 }
 
 /**

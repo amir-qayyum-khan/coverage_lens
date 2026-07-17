@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const {
     buildJunctionsByRepoFolder,
+    buildSourceRootByRepoFolder,
     normalizeAppJunctions,
     repoFolderKeyFromUrl,
     JUNCTIONS_CORE,
@@ -64,6 +65,9 @@ const JUNCTION_SOURCE_REPO_FOLDERS = new Set([
 
 /** Catalog folder → configured junction link names. */
 const JUNCTIONS_BY_REPO_FOLDER = buildJunctionsByRepoFolder();
+
+/** Catalog folder → relative source root override (e.g. DriverCom → source/UI/src). */
+const SOURCE_ROOT_BY_REPO_FOLDER = buildSourceRootByRepoFolder();
 
 /**
  * Legacy profile map derived from catalog junctions (core if we-track, else standard).
@@ -267,18 +271,30 @@ function isTrapezeCoreUIClone(clonePath, repoUrl = null) {
 }
 
 /**
- * Resolve app source dir under a Trapeze UI clone (CoreUI-style source/src or CRA-style src).
+ * Resolve app source dir under a Trapeze UI clone.
+ * Prefers catalog sourceRoot (e.g. DriverCom source/UI/src), then source/src, source/UI/src, or src.
  * @param {string} clonePath
  * @returns {string|null}
  */
 function resolveTrapezeSrcDir(clonePath) {
-    const nested = path.join(clonePath, 'source', 'src');
-    if (fs.existsSync(nested) && fs.statSync(nested).isDirectory()) {
-        return nested;
+    const folder = path.basename(clonePath);
+    const catalogRel = SOURCE_ROOT_BY_REPO_FOLDER[folder];
+    if (catalogRel) {
+        const catalogPath = path.join(clonePath, ...catalogRel.split('/'));
+        if (fs.existsSync(catalogPath) && fs.statSync(catalogPath).isDirectory()) {
+            return catalogPath;
+        }
     }
-    const rootSrc = path.join(clonePath, 'src');
-    if (fs.existsSync(rootSrc) && fs.statSync(rootSrc).isDirectory()) {
-        return rootSrc;
+
+    const candidates = [
+        path.join(clonePath, 'source', 'src'),
+        path.join(clonePath, 'source', 'UI', 'src'),
+        path.join(clonePath, 'src')
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+            return candidate;
+        }
     }
     return null;
 }
@@ -632,7 +648,7 @@ async function setupTrapezeUIJunctions(clonePath, options = {}) {
         return {
             success: false,
             skipped: false,
-            message: 'source/src or src not found under Trapeze UI clone',
+            message: 'source/src, source/UI/src, or src not found under Trapeze UI clone',
             profile,
             links,
             warnings,

@@ -21,7 +21,12 @@ const YOU_APPS = [
     },
     { name: 'YouDriveUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouDriveUI.git' },
     { name: 'YouDriveAdminUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouDriveAdminUI.git' },
-    { name: 'YouCertUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouCertUI.git' }
+    { name: 'YouCertUI', url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouCertUI.git' },
+    {
+        name: 'YouApplyUI',
+        url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouApply.git',
+        junctions: [...JUNCTIONS_STANDARD]
+    }
 ];
 
 const WE_APPS = [
@@ -52,7 +57,13 @@ const WE_APPS = [
         url: 'https://git.we-support.se/Trapeze/TrapezeDRTBatchSchedulingAgentUI.git',
         junctions: [...JUNCTIONS_STANDARD]
     },
-    { name: 'FrameworkUI', url: 'https://git.we-support.se/Trapeze/TrapezeFrameworkUI.git' }
+    { name: 'FrameworkUI', url: 'https://git.we-support.se/Trapeze/TrapezeFrameworkUI.git' },
+    {
+        name: 'DriverCom',
+        url: 'https://git.we-support.se/Trapeze/TrapezeDRTDriverCom.git',
+        junctions: [...JUNCTIONS_STANDARD],
+        sourceRoot: 'source/UI/src'
+    }
 ];
 
 /**
@@ -86,6 +97,26 @@ function normalizeAppJunctions(junctions) {
 }
 
 /**
+ * Normalize optional catalog sourceRoot (relative path from clone root).
+ * Rejects absolute paths and path traversal.
+ * @param {unknown} sourceRoot
+ * @returns {string|null} Forward-slash relative path, or null if invalid/empty
+ */
+function normalizeAppSourceRoot(sourceRoot) {
+    if (typeof sourceRoot !== 'string') {
+        return null;
+    }
+    const trimmed = sourceRoot.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    if (!trimmed) {
+        return null;
+    }
+    if (trimmed.includes(':') || trimmed.split('/').some((seg) => seg === '..')) {
+        return null;
+    }
+    return trimmed;
+}
+
+/**
  * Build repo folder basename → junction link names from the apps catalog.
  * @returns {Record<string, string[]>}
  */
@@ -104,6 +135,25 @@ function buildJunctionsByRepoFolder() {
     return map;
 }
 
+/**
+ * Build repo folder basename → relative source root from the apps catalog.
+ * @returns {Record<string, string>}
+ */
+function buildSourceRootByRepoFolder() {
+    const map = {};
+    for (const app of [...YOU_APPS, ...WE_APPS]) {
+        const folder = repoFolderKeyFromUrl(app.url);
+        if (!folder) {
+            continue;
+        }
+        const root = normalizeAppSourceRoot(app.sourceRoot);
+        if (root) {
+            map[folder] = root;
+        }
+    }
+    return map;
+}
+
 module.exports = {
     YOU_APPS,
     WE_APPS,
@@ -111,5 +161,7 @@ module.exports = {
     JUNCTIONS_CORE,
     repoFolderKeyFromUrl,
     normalizeAppJunctions,
-    buildJunctionsByRepoFolder
+    normalizeAppSourceRoot,
+    buildJunctionsByRepoFolder,
+    buildSourceRootByRepoFolder
 };
