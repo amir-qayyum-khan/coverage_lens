@@ -1,6 +1,6 @@
 {
     "name": "voyagerr-lens",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "Desktop application for analyzing code metrics and test coverage",
     "main": "main.js",
     "scripts": {
