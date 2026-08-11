@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { YOU_APPS, WE_APPS } from '../data/appsCatalog';
+import { YOU_APPS, WE_APPS, resolveRemoteCoverageBranches } from '../data/appsCatalog';
 
 /**
  * Super Dashboard — fetches coverage JSON from Gitea remote in parallel.
  * Each row shows a skeleton loader until its data arrives.
- * Tries branch: developV2 → develop.
+ * Uses each app's catalog defaultBranch first (then developV2 / develop).
  */
 function SuperDashboard({
     knownClonePaths = [],
@@ -61,7 +61,11 @@ function SuperDashboard({
         await Promise.allSettled(
             allApps.map(async (app) => {
                 try {
-                    const result = await window.electronAPI.fetchRemoteCoverage(app.url, creds);
+                    const result = await window.electronAPI.fetchRemoteCoverage(
+                        app.url,
+                        creds,
+                        resolveRemoteCoverageBranches(app)
+                    );
                     if (id !== fetchIdRef.current) return; // stale
 
                     if (result.success && result.data?.coverage) {
@@ -342,7 +346,9 @@ function SuperDashboard({
                     </div>
                 )}
                 <p className="settings-desc" style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', maxWidth: '720px' }}>
-                    Coverage data is fetched directly from Gitea (<code>developV2</code> → <code>develop</code>).
+                    Coverage data is fetched from each app's catalog default branch
+                    (usually <code>developV2</code>; YouTravelUI / YouDriveUI use <code>develop</code>),
+                    then falls back to the other common branch.
                     Results stream in as each project responds.
                 </p>
             </header>

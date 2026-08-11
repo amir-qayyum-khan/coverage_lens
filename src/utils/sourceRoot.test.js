@@ -57,11 +57,29 @@ describe('sourceRoot', () => {
             expect(resolveAnalyzerTargetPath(tmpDir)).toBe(uiSrc);
         });
 
-        test('isFullSourceTreeScope accepts source/UI/src', () => {
+        test('isFullSourceTreeScope accepts source/UI/src and project root', () => {
             expect(isFullSourceTreeScope('source/UI/src')).toBe(true);
             expect(isFullSourceTreeScope('source/src')).toBe(true);
             expect(isFullSourceTreeScope('src')).toBe(true);
+            expect(isFullSourceTreeScope('')).toBe(true);
             expect(isFullSourceTreeScope('source/Backend')).toBe(false);
+        });
+    });
+
+    describe('findSourceRootUnder / flat YouDrive layout', () => {
+        test('uses catalog sourceRoot . (clone root) when clone has no src', () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTYouDriveUI');
+            fs.mkdirSync(path.join(clonePath, 'components'), { recursive: true });
+            expect(findSourceRootUnder(clonePath)).toBe(path.resolve(clonePath));
+            expect(resolveAnalyzerTargetPath(clonePath)).toBe(path.resolve(clonePath));
+            expect(resolveCollectCoverageScope(clonePath)).toBe('');
+        });
+
+        test('uses catalog sourceRoot . for YouTravelUI', () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTYouTravelUI');
+            fs.mkdirSync(path.join(clonePath, 'components'), { recursive: true });
+            expect(findSourceRootUnder(clonePath)).toBe(path.resolve(clonePath));
+            expect(resolveCollectCoverageScope(clonePath)).toBe('');
         });
     });
 });

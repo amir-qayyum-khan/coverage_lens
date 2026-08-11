@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const { buildSourceRootByRepoFolder } = require('../data/appsCatalog');
 
 /**
  * Relative segments from repo root to the main JS source tree (first match wins).
@@ -11,16 +12,43 @@ const SOURCE_ROOT_RELATIVE_CANDIDATES = [
     path.join('source', 'UI', 'src')
 ];
 
-/** Relative paths treated as the full source tree for analyzer targeting / batching. */
-const FULL_SOURCE_TREE_SCOPES = new Set(['src', 'source/src', 'source/UI/src']);
+/** Relative paths treated as the full source tree for analyzer targeting / batching. Empty = clone root. */
+const FULL_SOURCE_TREE_SCOPES = new Set(['src', 'source/src', 'source/UI/src', '']);
+
+/** Repo folder basename → relative source root from apps catalog (e.g. YouDrive → `.`). */
+const SOURCE_ROOT_BY_REPO_FOLDER = buildSourceRootByRepoFolder();
+
+/**
+ * Resolve catalog sourceRoot relative path against a clone/base directory.
+ * @param {string} basePath
+ * @param {string} catalogRel - Relative path or `.` for the base itself
+ * @returns {string} Absolute path
+ */
+function resolveCatalogSourceRootPath(basePath, catalogRel) {
+    if (catalogRel === '.') {
+        return path.resolve(basePath);
+    }
+    return path.join(basePath, ...catalogRel.split('/'));
+}
 
 /**
  * Find the primary source directory under a base path.
+ * Prefers catalog sourceRoot when the base folder name matches a catalog override.
  * @param {string} basePath - Repo root or parent folder
  * @returns {string|null} Absolute path to source tree
  */
 function findSourceRootUnder(basePath) {
     if (!basePath || !fs.existsSync(basePath)) return null;
+
+    // Catalog override (e.g. YouTravel/YouDrive → `.`, DriverCom → source/UI/src)
+    const folder = path.basename(basePath);
+    const catalogRel = SOURCE_ROOT_BY_REPO_FOLDER[folder];
+    if (catalogRel) {
+        const catalogPath = resolveCatalogSourceRootPath(basePath, catalogRel);
+        if (fs.existsSync(catalogPath) && fs.statSync(catalogPath).isDirectory()) {
+            return catalogPath;
+        }
+    }
 
     for (const rel of SOURCE_ROOT_RELATIVE_CANDIDATES) {
         const candidate = path.join(basePath, rel);

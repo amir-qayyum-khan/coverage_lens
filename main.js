@@ -425,12 +425,16 @@ ipcMain.handle('app:pushCoverageReport', async (event, { clonePath, branch, cred
     }
 });
 
-// Fetch the remote coverage JSON from Gitea (tries developV2, then develop)
-ipcMain.handle('app:fetchRemoteCoverage', async (event, { repoUrl, credentials }) => {
+// Fetch the remote coverage JSON from Gitea (catalog defaultBranch first, then common fallbacks)
+ipcMain.handle('app:fetchRemoteCoverage', async (event, { repoUrl, credentials, branches }) => {
     const https = require('https');
     const http = require('http');
     const FILE_PATH = '.code-analyzer/super-dashboard-jest.json';
-    const BRANCHES = ['developV2', 'develop'];
+    // Prefer caller-supplied order (per-app catalog defaultBranch); keep legacy fallback
+    const BRANCHES =
+        Array.isArray(branches) && branches.length > 0
+            ? [...new Set(branches.filter((b) => typeof b === 'string' && b.trim()).map((b) => b.trim()))]
+            : ['developV2', 'develop'];
 
     function buildRawUrl(url, branch) {
         const base = url.replace(/\.git$/i, '').replace(/\/$/, '');
@@ -478,7 +482,10 @@ ipcMain.handle('app:fetchRemoteCoverage', async (event, { repoUrl, credentials }
             }
         } catch { /* try next branch */ }
     }
-    return { success: false, message: 'Coverage not found on developV2 or develop' };
+    return {
+        success: false,
+        message: `Coverage not found on ${BRANCHES.join(' or ') || 'any branch'}`
+    };
 });
 
 // Open a URL in the system browser (for Gitea auth / token creation)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { YOU_APPS, WE_APPS } from '../data/appsCatalog';
+import { YOU_APPS, WE_APPS, resolveAppDefaultBranch } from '../data/appsCatalog';
 import { rememberClonePath } from '../utils/superDashboardClonePaths';
 
 function Dashboard() {
@@ -9,7 +9,14 @@ function Dashboard() {
     const [installingGit, setInstallingGit] = useState(false);
     const [installProgress, setInstallProgress] = useState(null);
     const [appStatuses, setAppStatuses] = useState({});
-    const [branchInputs, setBranchInputs] = useState({});
+    // Prefill each card with catalog defaultBranch so Clone & Test uses it unless edited
+    const [branchInputs, setBranchInputs] = useState(() => {
+        const initial = {};
+        for (const app of [...YOU_APPS, ...WE_APPS]) {
+            initial[app.name] = resolveAppDefaultBranch(app);
+        }
+        return initial;
+    });
     const [gitPushStatus, setGitPushStatus] = useState({}); // { [name]: { state:'idle'|'pushing'|'pushed'|'error', msg } }
     const [error, setError] = useState(null);
 
@@ -169,6 +176,9 @@ function Dashboard() {
             <div className="app-grid">
                 {apps.map(app => {
                     const status = appStatuses[app.name];
+                    const defaultBranch = resolveAppDefaultBranch(app);
+                    const currentBranch = branchInputs[app.name] ?? '';
+                    const isDefaultBranch = currentBranch === defaultBranch;
                     return (
                         <div key={app.name} className={`app-card ${status?.status || ''}`}>
                             <div className="app-card-header">
@@ -235,20 +245,22 @@ function Dashboard() {
                             )}
 
                             <div className="app-card-actions" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                <div className="form-group" style={{ width: '100%' }}>
+                                <div className="form-group" style={{ width: '100%', display: 'flex', gap: '8px', alignItems: 'center' }}>
                                     <input
                                         type="text"
                                         className="styled-input"
-                                        placeholder="Branch (default: master)"
-                                        value={branchInputs[app.name] || ''}
+                                        aria-label={`${app.name} branch`}
+                                        placeholder={`Branch (default: ${defaultBranch})`}
+                                        value={currentBranch}
                                         onChange={(e) => {
                                             // Read value before setState: React 16 pools events; functional updaters run later when e.target is null
                                             const value = e.target.value;
                                             setBranchInputs((prev) => ({ ...prev, [app.name]: value }));
                                         }}
-                                        style={{ 
-                                            width: '100%', 
-                                            padding: '6px 10px', 
+                                        style={{
+                                            flex: 1,
+                                            minWidth: 0,
+                                            padding: '6px 10px',
                                             fontSize: '12px',
                                             background: 'rgba(255,255,255,0.05)',
                                             border: '1px solid rgba(255,255,255,0.1)',
@@ -256,6 +268,22 @@ function Dashboard() {
                                             color: 'white'
                                         }}
                                     />
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary btn-xs"
+                                        aria-label={`Restore ${app.name} default branch`}
+                                        title={`Restore ${defaultBranch}`}
+                                        disabled={isDefaultBranch}
+                                        onClick={() => {
+                                            setBranchInputs((prev) => ({
+                                                ...prev,
+                                                [app.name]: defaultBranch
+                                            }));
+                                        }}
+                                        style={{ flexShrink: 0 }}
+                                    >
+                                        Restore
+                                    </button>
                                 </div>
                                 <button
                                     className="btn btn-primary btn-sm"

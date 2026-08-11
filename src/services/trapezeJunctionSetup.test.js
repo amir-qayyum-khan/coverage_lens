@@ -227,6 +227,18 @@ describe('trapezeJunctionSetup', () => {
             expect(resolveTrapezeSrcDir(clonePath)).toBe(uiSrc);
         });
 
+        test('uses catalog sourceRoot . for YouTravelUI flat layout', () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTYouTravelUI');
+            fs.mkdirSync(path.join(clonePath, 'components'), { recursive: true });
+            expect(resolveTrapezeSrcDir(clonePath)).toBe(path.resolve(clonePath));
+        });
+
+        test('uses catalog sourceRoot . for YouDriveUI flat layout', () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTYouDriveUI');
+            fs.mkdirSync(path.join(clonePath, 'components'), { recursive: true });
+            expect(resolveTrapezeSrcDir(clonePath)).toBe(path.resolve(clonePath));
+        });
+
         test('falls back to source/UI/src when catalog folder name differs', () => {
             const clonePath = path.join(tmpDir, 'SomeOtherClone');
             const uiSrc = path.join(clonePath, 'source', 'UI', 'src');

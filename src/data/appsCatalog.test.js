@@ -3,7 +3,10 @@ const {
     WE_APPS,
     JUNCTIONS_STANDARD,
     JUNCTIONS_CORE,
+    DEFAULT_BRANCH_FALLBACK,
     repoFolderKeyFromUrl,
+    resolveAppDefaultBranch,
+    resolveRemoteCoverageBranches,
     normalizeAppJunctions,
     normalizeAppSourceRoot,
     buildJunctionsByRepoFolder,
@@ -29,7 +32,10 @@ describe('appsCatalog', () => {
     test('normalizeAppSourceRoot normalizes and rejects unsafe paths', () => {
         expect(normalizeAppSourceRoot('source/UI/src')).toBe('source/UI/src');
         expect(normalizeAppSourceRoot('  source\\UI\\src  ')).toBe('source/UI/src');
+        expect(normalizeAppSourceRoot('.')).toBe('.');
+        expect(normalizeAppSourceRoot('./')).toBe('.');
         expect(normalizeAppSourceRoot('../etc')).toBeNull();
+        expect(normalizeAppSourceRoot('foo/./bar')).toBeNull();
         expect(normalizeAppSourceRoot('C:/abs')).toBeNull();
         expect(normalizeAppSourceRoot('')).toBeNull();
         expect(normalizeAppSourceRoot(null)).toBeNull();
@@ -62,6 +68,47 @@ describe('appsCatalog', () => {
         expect(normalizeAppSourceRoot(driverCom.sourceRoot)).toBe('source/UI/src');
     });
 
+    test('YouTravelUI and YouDriveUI declare project-root sourceRoot', () => {
+        const youTravel = YOU_APPS.find((a) => a.name === 'YouTravelUI');
+        const youDrive = YOU_APPS.find((a) => a.name === 'YouDriveUI');
+        expect(youTravel).toBeDefined();
+        expect(youDrive).toBeDefined();
+        expect(normalizeAppSourceRoot(youTravel.sourceRoot)).toBe('.');
+        expect(normalizeAppSourceRoot(youDrive.sourceRoot)).toBe('.');
+    });
+
+    test('YouTravelUI and YouDriveUI default to develop; others developV2', () => {
+        const byName = Object.fromEntries(
+            [...YOU_APPS, ...WE_APPS].map((a) => [a.name, resolveAppDefaultBranch(a)])
+        );
+
+        expect(byName.YouTravelUI).toBe('develop');
+        expect(byName.YouDriveUI).toBe('develop');
+        expect(byName.LaunchpadUI).toBe('developV2');
+        expect(byName.YouBookUI).toBe('developV2');
+        expect(byName.CoreUI).toBe('developV2');
+        expect(byName.FrameworkUI).toBe('developV2');
+    });
+
+    test('resolveAppDefaultBranch falls back to developV2', () => {
+        expect(resolveAppDefaultBranch(null)).toBe(DEFAULT_BRANCH_FALLBACK);
+        expect(resolveAppDefaultBranch({})).toBe('developV2');
+        expect(resolveAppDefaultBranch({ defaultBranch: '  ' })).toBe('developV2');
+        expect(resolveAppDefaultBranch({ defaultBranch: '  feature/x  ' })).toBe('feature/x');
+    });
+
+    test('resolveRemoteCoverageBranches prefers catalog default then common fallbacks', () => {
+        const youTravel = YOU_APPS.find((a) => a.name === 'YouTravelUI');
+        const launchpad = YOU_APPS.find((a) => a.name === 'LaunchpadUI');
+        expect(resolveRemoteCoverageBranches(youTravel)).toEqual(['develop', 'developV2']);
+        expect(resolveRemoteCoverageBranches(launchpad)).toEqual(['developV2', 'develop']);
+        expect(resolveRemoteCoverageBranches({ defaultBranch: 'feature/x' })).toEqual([
+            'feature/x',
+            'developV2',
+            'develop'
+        ]);
+    });
+
     test('buildJunctionsByRepoFolder maps URL basenames for apps with junctions', () => {
         const map = buildJunctionsByRepoFolder();
         expect(map.TrapezeDRTYouBookUI).toEqual(JUNCTIONS_STANDARD);
@@ -72,9 +119,11 @@ describe('appsCatalog', () => {
         expect(map.TrapezeDRTWeTrackUI).toBeUndefined();
     });
 
-    test('buildSourceRootByRepoFolder maps DriverCom override only', () => {
+    test('buildSourceRootByRepoFolder maps catalog overrides', () => {
         const map = buildSourceRootByRepoFolder();
         expect(map.TrapezeDRTDriverCom).toBe('source/UI/src');
+        expect(map.TrapezeDRTYouTravelUI).toBe('.');
+        expect(map.TrapezeDRTYouDriveUI).toBe('.');
         expect(map.TrapezeDRTYouApply).toBeUndefined();
         expect(map.TrapezeDRTCoreUI).toBeUndefined();
     });

@@ -75,9 +75,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pushCoverageReport: (clonePath, branch, credentials) =>
         ipcRenderer.invoke('app:pushCoverageReport', { clonePath, branch, credentials }),
 
-    // Fetch remote coverage JSON from Gitea (tries developV2 then develop)
-    fetchRemoteCoverage: (repoUrl, credentials) =>
-        ipcRenderer.invoke('app:fetchRemoteCoverage', { repoUrl, credentials }),
+    // Fetch remote coverage JSON from Gitea (preferred branches, then developV2/develop)
+    fetchRemoteCoverage: (repoUrl, credentials, branches) =>
+        ipcRenderer.invoke('app:fetchRemoteCoverage', { repoUrl, credentials, branches }),
 
     // Open URL in system browser (Gitea auth / token page)
     openExternal: (url) =>

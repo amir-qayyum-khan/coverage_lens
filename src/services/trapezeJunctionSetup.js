@@ -272,7 +272,7 @@ function isTrapezeCoreUIClone(clonePath, repoUrl = null) {
 
 /**
  * Resolve app source dir under a Trapeze UI clone.
- * Prefers catalog sourceRoot (e.g. DriverCom source/UI/src), then source/src, source/UI/src, or src.
+ * Prefers catalog sourceRoot (e.g. DriverCom source/UI/src, YouDrive `.`), then source/src, source/UI/src, or src.
  * @param {string} clonePath
  * @returns {string|null}
  */
@@ -280,7 +280,8 @@ function resolveTrapezeSrcDir(clonePath) {
     const folder = path.basename(clonePath);
     const catalogRel = SOURCE_ROOT_BY_REPO_FOLDER[folder];
     if (catalogRel) {
-        const catalogPath = path.join(clonePath, ...catalogRel.split('/'));
+        const catalogPath =
+            catalogRel === '.' ? path.resolve(clonePath) : path.join(clonePath, ...catalogRel.split('/'));
         if (fs.existsSync(catalogPath) && fs.statSync(catalogPath).isDirectory()) {
             return catalogPath;
         }
