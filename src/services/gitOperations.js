@@ -3,8 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const { findJestProjectRoot, getMissingLines, findNearestJestConfig } = require('./coverageRunner');
 const { writeSuperDashboardJestSummary } = require('./superDashboardPersist');
-const { buildCollectCoverageFromPatterns } = require('../utils/coverageGlobs');
+const { buildCollectCoverageFromPatterns, unionCollectCoverageFrom } = require('../utils/coverageGlobs');
 const { resolveCollectCoverageScope, findSourceRootUnder, relativeToProject } = require('../utils/sourceRoot');
+const { ensureGitignoredConfigStubs } = require('../utils/ensureJestConfigStubs');
 const { canonicalPathKey, normalizeRelativeKey } = require('../utils/coverageMerge');
 const { resolveCoverageKeyToAbsolute, toDisplayRelativePath } = require('../utils/coveragePaths');
 const { parseJestOutput } = require('../utils/jestOutputParser');
@@ -511,7 +512,26 @@ async function runTests(clonePath, sendProgress, branch) {
 
     const coverageScope = resolveCollectCoverageScope(jestRoot);
     const fallbackPatterns = buildCollectCoverageFromPatterns(coverageScope);
-    const fallbackPatternsJson = JSON.stringify(fallbackPatterns, null, 4).replace(/\n/g, '\n    ');
+
+    // Stub gitignored config/config.js + theme.js so YouDrive/YouTravel suites can load
+    ensureGitignoredConfigStubs(jestRoot);
+
+    // Resolve collectCoverageFrom in-process: union project allowlist with source-tree globs
+    let resolvedCollectCoverageFrom = fallbackPatterns;
+    try {
+        const baseConfigForPatterns = baseConfigExists ? require(escapedBaseConfigPath) : {};
+        if (Array.isArray(baseConfigForPatterns.collectCoverageFrom) && baseConfigForPatterns.collectCoverageFrom.length) {
+            resolvedCollectCoverageFrom = unionCollectCoverageFrom(
+                baseConfigForPatterns.collectCoverageFrom,
+                coverageScope
+            );
+        } else if (baseConfigForPatterns.collectCoverageFrom) {
+            resolvedCollectCoverageFrom = baseConfigForPatterns.collectCoverageFrom;
+        }
+    } catch (err) {
+        console.warn(`[runTests] Could not load base collectCoverageFrom, using fallback: ${err.message}`);
+    }
+    const collectCoverageFromJson = JSON.stringify(resolvedCollectCoverageFrom, null, 4).replace(/\n/g, '\n    ');
 
     const tempConfigContent = `
 const fs = require('fs');
@@ -519,12 +539,11 @@ const fs = require('fs');
 module.exports = (function () {
     const baseConfig = fs.existsSync('${escapedBaseConfigPath}') ? require('${escapedBaseConfigPath}') : {};
     const { coverageThreshold, coveragePathIgnorePatterns, bail, ...rest } = baseConfig;
-    const collectCoverageFrom = baseConfig.collectCoverageFrom || ${fallbackPatternsJson};
     return {
         ...rest,
         bail: 0,
         collectCoverage: true,
-        collectCoverageFrom,
+        collectCoverageFrom: ${collectCoverageFromJson},
         coverageDirectory: '${coverageDir.replace(/\\/g, '/')}',
         coverageReporters: ['json-summary', 'json'],
         coverageThreshold: undefined,

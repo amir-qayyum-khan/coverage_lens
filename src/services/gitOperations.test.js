@@ -199,7 +199,67 @@ describe('gitOperations', () => {
                 })
             );
         });
+
+        test('stubs missing gitignored config.js before Jest and unions collectCoverageFrom', async () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTYouDriveUI');
+            const components = path.join(clonePath, 'components');
+            const configDir = path.join(clonePath, 'config');
+            fs.mkdirSync(components, { recursive: true });
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.writeFileSync(path.join(clonePath, 'package.json'), '{}', 'utf8');
+            fs.writeFileSync(
+                path.join(configDir, 'index.js'),
+                "import * as config from './config.js'\nexport default config\n",
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(clonePath, 'jest.config.js'),
+                `module.exports = {
+  collectCoverageFrom: [
+    'components/yod/**/*.js',
+    '!components/yod/index.js',
+    'components/auth/PasswordPage.js'
+  ]
+};
+`,
+                'utf8'
+            );
+
+            findJestProjectRoot.mockReturnValue(clonePath);
+            findNearestJestConfig.mockReturnValue(path.join(clonePath, 'jest.config.js'));
+            findTestFiles.mockReturnValue([]);
+
+            runResilientJestCoverage.mockImplementation(async () => {
+                const tempCfg = fs.readFileSync(path.join(clonePath, 'jest.config.js'), 'utf8');
+                expect(tempCfg).toContain('components/**/*.{js,jsx}');
+                expect(tempCfg).toContain('PasswordPage.js');
+                expect(fs.existsSync(path.join(configDir, 'config.js'))).toBe(true);
+                expect(fs.existsSync(path.join(configDir, 'theme.js'))).toBe(true);
+                return {
+                    success: true,
+                    hasCoverage: false,
+                    message: 'No coverage data generated',
+                    totalTests: 0,
+                    passedTests: 0,
+                    failedTests: 0,
+                    testSuites: 0,
+                    passedSuites: 0,
+                    failedSuites: 0,
+                    incompleteRun: false,
+                    failedTestFiles: [],
+                    exitCode: 0,
+                    diagnostics: { coverageExecutionMode: 'full', phasesUsed: ['full'] }
+                };
+            });
+
+            await runTests(clonePath, () => {}, 'develop');
+
+            expect(runResilientJestCoverage).toHaveBeenCalled();
+            expect(fs.existsSync(path.join(configDir, 'config.js'))).toBe(true);
+            expect(fs.existsSync(path.join(configDir, 'theme.js'))).toBe(true);
+        });
     });
+
 
     describe('mapCoverageSummaryFiles', () => {
         test('maps relative jest keys to clone-relative paths for CoreUI layout', () => {

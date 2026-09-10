@@ -626,6 +626,10 @@ async function runCoverage(folderPath, options = {}) {
         };
     }
 
+    // YouDrive/YouTravel: stub gitignored config.js / theme.js so suites can load
+    const { ensureGitignoredConfigStubs } = require('../utils/ensureJestConfigStubs');
+    ensureGitignoredConfigStubs(projectRoot);
+
     const targetAnalysisPath = resolveTargetAnalysisPath(folderPath, projectRoot);
     const jestCoverageScope = resolveJestCoverageScope(projectRoot, targetAnalysisPath);
 
