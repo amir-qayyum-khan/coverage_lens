@@ -10,6 +10,7 @@ const {
     detectIncompleteJestRun
 } = require('../utils/jestOutputParser');
 const { logRepoCommand, resolveRepoNameFromCwd, truncateLogTail } = require('../utils/repoCommandLogger');
+const { resolveJestCoverageScope } = require('../utils/sourceRoot');
 
 const TEST_FILE_RE = /\.(test|spec)\.(js|jsx)$/i;
 const WALK_SKIP_DIRS = ['node_modules', 'coverage', 'coverage_temp', 'dist', 'build', '.git'];
@@ -151,6 +152,9 @@ function buildJestSpawn(opts) {
 
     if (mode === 'full') {
         jestArgs.push('--maxWorkers=50%');
+        if (testPathPattern) {
+            jestArgs.push(`--testPathPattern=${testPathPattern}`);
+        }
     } else if (mode === 'batch') {
         jestArgs.push('--maxWorkers=50%');
         if (testPathPattern) {
@@ -472,16 +476,20 @@ async function runResilientJestCoverage(opts) {
     let phasesUsed = [];
     const poolSize = Math.min(MAX_CONCURRENCY, Math.max(1, concurrency));
 
-    // --- Phase 1: full-project run ---
+    // --- Phase 1: full-project run (scoped when targetAnalysisPath is nested) ---
     sendProgress('testing', 'Running full-project Jest coverage...', 90);
     const fullCoverageDir = path.join(jestRoot, 'coverage_temp', 'full');
     fs.mkdirSync(fullCoverageDir, { recursive: true });
+
+    const coverageScope = resolveJestCoverageScope(jestRoot, targetAnalysisPath);
+    const fullTestPathPattern = buildTestPathPattern(coverageScope);
 
     const fullResult = await runJestSpawn({
         projectRoot: jestRoot,
         configPath: jestConfigPath,
         coverageDir: fullCoverageDir,
         mode: 'full',
+        testPathPattern: fullTestPathPattern,
         logRepoName
     });
     lastCommandPreview = fullResult.commandLine;

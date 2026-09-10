@@ -19,7 +19,8 @@ const {
     runIsolatedJestCoverage,
     findTestFiles,
     sanitizeCoverageTempKey,
-    runWithConcurrency
+    runWithConcurrency,
+    buildJestSpawn
 } = require('./jestResilientCoverage');
 
 function mockJestChild(exitCode, stdoutText = '') {
@@ -99,6 +100,29 @@ describe('jestResilientCoverage', () => {
         expect(maxActive).toBeLessThanOrEqual(2);
     });
 
+    test('full spawn includes testPathPattern when target is nested', () => {
+        const { args } = buildJestSpawn({
+            projectRoot: tmpDir,
+            configPath: path.join(tmpDir, 'jest.config.js'),
+            coverageDir: path.join(tmpDir, 'coverage_temp', 'full'),
+            mode: 'full',
+            testPathPattern: 'components'
+        });
+        expect(args).toContain('--testPathPattern=components');
+        expect(args).toContain('--maxWorkers=50%');
+    });
+
+    test('full spawn omits testPathPattern when scope is empty', () => {
+        const { args } = buildJestSpawn({
+            projectRoot: tmpDir,
+            configPath: path.join(tmpDir, 'jest.config.js'),
+            coverageDir: path.join(tmpDir, 'coverage_temp', 'full'),
+            mode: 'full',
+            testPathPattern: null
+        });
+        expect(args.some((a) => String(a).startsWith('--testPathPattern='))).toBe(false);
+    });
+
     test('full run success skips batch and per-file phases', async () => {
         spawn.mockImplementation(() => {
             const spawnArgs = spawn.mock.calls[spawn.mock.calls.length - 1][1];
@@ -117,6 +141,27 @@ describe('jestResilientCoverage', () => {
         expect(result.hasCoverage).toBe(true);
         expect(result.diagnostics.coverageExecutionMode).toBe('full');
         expect(result.diagnostics.phasesUsed).toEqual(['full']);
+    });
+
+    test('full hybrid run passes testPathPattern for nested targetAnalysisPath', async () => {
+        fs.mkdirSync(path.join(tmpDir, 'components'), { recursive: true });
+        spawn.mockImplementation(() => {
+            const spawnArgs = spawn.mock.calls[spawn.mock.calls.length - 1][1];
+            const coverageDirArg = spawnArgs.find((a) => String(a).startsWith('--coverageDirectory='));
+            const dir = coverageDirArg.slice('--coverageDirectory='.length);
+            writeCoverageArtifacts(dir);
+            return mockJestChild(0, PASS_OUTPUT);
+        });
+
+        const result = await runResilientJestCoverage({
+            jestRoot: tmpDir,
+            jestConfigPath: path.join(tmpDir, 'jest.config.js'),
+            targetAnalysisPath: path.join(tmpDir, 'components')
+        });
+
+        expect(result.hasCoverage).toBe(true);
+        const spawnArgs = spawn.mock.calls[0][1];
+        expect(spawnArgs).toEqual(expect.arrayContaining(['--testPathPattern=components']));
     });
 
     test('falls back to batch when full run is incomplete', async () => {

@@ -272,7 +272,7 @@ function isTrapezeCoreUIClone(clonePath, repoUrl = null) {
 
 /**
  * Resolve app source dir under a Trapeze UI clone.
- * Prefers catalog sourceRoot (e.g. DriverCom source/UI/src, YouDrive `.`), then source/src, source/UI/src, or src.
+ * Prefers catalog sourceRoot (e.g. DriverCom source/UI/src, YouDrive `components`), then source/src, source/UI/src, or src.
  * @param {string} clonePath
  * @returns {string|null}
  */

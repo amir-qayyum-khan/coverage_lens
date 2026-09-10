@@ -18,8 +18,8 @@ const YOU_APPS = [
     {
         name: 'YouTravelUI',
         url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouTravelUI.git',
-        // Flat layout: package.json / jest / components live at clone root (no src/)
-        sourceRoot: '.',
+        // Analyze/test components/; Jest config and package.json stay at clone root
+        sourceRoot: 'components',
         defaultBranch: 'develop'
     },
     {
@@ -37,8 +37,8 @@ const YOU_APPS = [
     {
         name: 'YouDriveUI',
         url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouDriveUI.git',
-        // Flat layout: package.json / jest / components live at clone root (no src/)
-        sourceRoot: '.',
+        // Analyze/test components/; Jest config and package.json stay at clone root
+        sourceRoot: 'components',
         defaultBranch: 'develop'
     },
     {

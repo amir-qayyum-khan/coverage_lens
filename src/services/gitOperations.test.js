@@ -42,7 +42,7 @@ jest.mock('./jestResilientCoverage', () => ({
 
 const { spawn } = require('child_process');
 const { findJestProjectRoot, findNearestJestConfig } = require('./coverageRunner');
-const { runResilientJestCoverage } = require('./jestResilientCoverage');
+const { runResilientJestCoverage, findTestFiles } = require('./jestResilientCoverage');
 const { setupTrapezeUIJunctions } = require('./trapezeJunctionSetup');
 const { beginRepoLogSession } = require('../utils/repoCommandLogger');
 const {
@@ -150,12 +150,54 @@ describe('gitOperations', () => {
             expect(r.jestProjectRoot).toBe(jestRoot);
             expect(r.coverage.total.lines.pct).toBe(100);
 
+            const call = runResilientJestCoverage.mock.calls[0][0];
+            expect(call.jestRoot).toBe(jestRoot);
+            expect(call.targetAnalysisPath).toBe(jestRoot);
+
             const summaryPath = path.join(tmpDir, '.code-analyzer', 'super-dashboard-jest.json');
             expect(fs.existsSync(summaryPath)).toBe(true);
             const written = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
             expect(written.branch).toBe('feature/x');
             expect(written.coverage.lines.pct).toBe(100);
             expect(written.reportSource).toBe('clone-test');
+        });
+
+        test('scopes targetAnalysisPath and findTestFiles to catalog sourceRoot', async () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTYouDriveUI');
+            const components = path.join(clonePath, 'components');
+            fs.mkdirSync(components, { recursive: true });
+            fs.writeFileSync(path.join(clonePath, 'package.json'), '{}', 'utf8');
+            fs.writeFileSync(path.join(clonePath, 'jest.config.js'), 'module.exports = {};\n', 'utf8');
+
+            findJestProjectRoot.mockReturnValue(clonePath);
+            findNearestJestConfig.mockReturnValue(path.join(clonePath, 'jest.config.js'));
+            findTestFiles.mockReturnValue([]);
+
+            runResilientJestCoverage.mockResolvedValue({
+                success: true,
+                hasCoverage: false,
+                message: 'No coverage data generated',
+                totalTests: 0,
+                passedTests: 0,
+                failedTests: 0,
+                testSuites: 0,
+                passedSuites: 0,
+                failedSuites: 0,
+                incompleteRun: false,
+                failedTestFiles: [],
+                exitCode: 0,
+                diagnostics: { coverageExecutionMode: 'full', phasesUsed: ['full'] }
+            });
+
+            await runTests(clonePath, () => {}, 'develop');
+
+            expect(findTestFiles).toHaveBeenCalledWith(clonePath, 'components');
+            expect(runResilientJestCoverage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    jestRoot: clonePath,
+                    targetAnalysisPath: path.resolve(components)
+                })
+            );
         });
     });
 

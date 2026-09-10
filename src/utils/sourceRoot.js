@@ -13,9 +13,9 @@ const SOURCE_ROOT_RELATIVE_CANDIDATES = [
 ];
 
 /** Relative paths treated as the full source tree for analyzer targeting / batching. Empty = clone root. */
-const FULL_SOURCE_TREE_SCOPES = new Set(['src', 'source/src', 'source/UI/src', '']);
+const FULL_SOURCE_TREE_SCOPES = new Set(['src', 'source/src', 'source/UI/src', 'components', '']);
 
-/** Repo folder basename → relative source root from apps catalog (e.g. YouDrive → `.`). */
+/** Repo folder basename → relative source root from apps catalog (e.g. YouDrive → `components`). */
 const SOURCE_ROOT_BY_REPO_FOLDER = buildSourceRootByRepoFolder();
 
 /**
@@ -40,7 +40,7 @@ function resolveCatalogSourceRootPath(basePath, catalogRel) {
 function findSourceRootUnder(basePath) {
     if (!basePath || !fs.existsSync(basePath)) return null;
 
-    // Catalog override (e.g. YouTravel/YouDrive → `.`, DriverCom → source/UI/src)
+    // Catalog override (e.g. YouTravel/YouDrive → `components`, DriverCom → source/UI/src)
     const folder = path.basename(basePath);
     const catalogRel = SOURCE_ROOT_BY_REPO_FOLDER[folder];
     if (catalogRel) {

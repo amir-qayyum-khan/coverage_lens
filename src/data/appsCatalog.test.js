@@ -68,13 +68,13 @@ describe('appsCatalog', () => {
         expect(normalizeAppSourceRoot(driverCom.sourceRoot)).toBe('source/UI/src');
     });
 
-    test('YouTravelUI and YouDriveUI declare project-root sourceRoot', () => {
+    test('YouTravelUI and YouDriveUI declare components sourceRoot', () => {
         const youTravel = YOU_APPS.find((a) => a.name === 'YouTravelUI');
         const youDrive = YOU_APPS.find((a) => a.name === 'YouDriveUI');
         expect(youTravel).toBeDefined();
         expect(youDrive).toBeDefined();
-        expect(normalizeAppSourceRoot(youTravel.sourceRoot)).toBe('.');
-        expect(normalizeAppSourceRoot(youDrive.sourceRoot)).toBe('.');
+        expect(normalizeAppSourceRoot(youTravel.sourceRoot)).toBe('components');
+        expect(normalizeAppSourceRoot(youDrive.sourceRoot)).toBe('components');
     });
 
     test('YouTravelUI and YouDriveUI default to develop; others developV2', () => {
@@ -122,8 +122,8 @@ describe('appsCatalog', () => {
     test('buildSourceRootByRepoFolder maps catalog overrides', () => {
         const map = buildSourceRootByRepoFolder();
         expect(map.TrapezeDRTDriverCom).toBe('source/UI/src');
-        expect(map.TrapezeDRTYouTravelUI).toBe('.');
-        expect(map.TrapezeDRTYouDriveUI).toBe('.');
+        expect(map.TrapezeDRTYouTravelUI).toBe('components');
+        expect(map.TrapezeDRTYouDriveUI).toBe('components');
         expect(map.TrapezeDRTYouApply).toBeUndefined();
         expect(map.TrapezeDRTCoreUI).toBeUndefined();
     });

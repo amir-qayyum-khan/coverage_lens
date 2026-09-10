@@ -4,7 +4,7 @@ const fs = require('fs');
 const { findJestProjectRoot, getMissingLines, findNearestJestConfig } = require('./coverageRunner');
 const { writeSuperDashboardJestSummary } = require('./superDashboardPersist');
 const { buildCollectCoverageFromPatterns } = require('../utils/coverageGlobs');
-const { resolveCollectCoverageScope } = require('../utils/sourceRoot');
+const { resolveCollectCoverageScope, findSourceRootUnder, relativeToProject } = require('../utils/sourceRoot');
 const { canonicalPathKey, normalizeRelativeKey } = require('../utils/coverageMerge');
 const { resolveCoverageKeyToAbsolute, toDisplayRelativePath } = require('../utils/coveragePaths');
 const { parseJestOutput } = require('../utils/jestOutputParser');
@@ -541,7 +541,10 @@ module.exports = (function () {
         }
     }
 
-    const testCandidates = findTestFiles(jestRoot);
+    // Scope tests to catalog/detected source tree; Jest cwd stays at jestRoot (config parent)
+    const sourceRootPath = findSourceRootUnder(jestRoot) || jestRoot;
+    const sourceScopeRel = relativeToProject(jestRoot, sourceRootPath);
+    const testCandidates = findTestFiles(jestRoot, sourceScopeRel);
     const relRoot = path.relative(clonePath, jestRoot) || '.';
     sendProgress(
         'testing',
@@ -576,7 +579,7 @@ module.exports = (function () {
             sendProgress,
             logRepoName: jestLogRepo,
             finalCoverageDir: coverageDir,
-            targetAnalysisPath: jestRoot,
+            targetAnalysisPath: sourceRootPath,
             sourceFileCount: testCandidates.length
         });
 
