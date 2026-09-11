@@ -10,7 +10,8 @@ const {
     normalizeAppJunctions,
     normalizeAppSourceRoot,
     buildJunctionsByRepoFolder,
-    buildSourceRootByRepoFolder
+    buildSourceRootByRepoFolder,
+    buildJestSourceScopeByRepoFolder
 } = require('./appsCatalog');
 
 describe('appsCatalog', () => {
@@ -77,6 +78,19 @@ describe('appsCatalog', () => {
         expect(normalizeAppSourceRoot(youDrive.sourceRoot)).toBe('components');
     });
 
+    test('only YouTravelUI and YouDriveUI opt into Jest source-root scoping', () => {
+        const youTravel = YOU_APPS.find((a) => a.name === 'YouTravelUI');
+        const youDrive = YOU_APPS.find((a) => a.name === 'YouDriveUI');
+        const coreUi = WE_APPS.find((a) => a.name === 'CoreUI');
+        const driverCom = WE_APPS.find((a) => a.name === 'DriverCom');
+        const youBook = YOU_APPS.find((a) => a.name === 'YouBookUI');
+        expect(youTravel.scopeJestToSourceRoot).toBe(true);
+        expect(youDrive.scopeJestToSourceRoot).toBe(true);
+        expect(coreUi.scopeJestToSourceRoot).toBeUndefined();
+        expect(driverCom.scopeJestToSourceRoot).toBeUndefined();
+        expect(youBook.scopeJestToSourceRoot).toBeUndefined();
+    });
+
     test('YouTravelUI and YouDriveUI default to develop; others developV2', () => {
         const byName = Object.fromEntries(
             [...YOU_APPS, ...WE_APPS].map((a) => [a.name, resolveAppDefaultBranch(a)])
@@ -126,6 +140,16 @@ describe('appsCatalog', () => {
         expect(map.TrapezeDRTYouDriveUI).toBe('components');
         expect(map.TrapezeDRTYouApply).toBeUndefined();
         expect(map.TrapezeDRTCoreUI).toBeUndefined();
+    });
+
+    test('buildJestSourceScopeByRepoFolder maps only flagged YouDrive/YouTravel', () => {
+        const map = buildJestSourceScopeByRepoFolder();
+        expect(map.TrapezeDRTYouDriveUI).toBe('components');
+        expect(map.TrapezeDRTYouTravelUI).toBe('components');
+        expect(map.TrapezeDRTCoreUI).toBeUndefined();
+        expect(map.TrapezeDRTDriverCom).toBeUndefined();
+        expect(map.TrapezeDRTYouBookUI).toBeUndefined();
+        expect(map.TrapezeDRTYouOperateUI).toBeUndefined();
     });
 
     test('YOU_APPS and WE_APPS URL basenames are unique across catalogs', () => {

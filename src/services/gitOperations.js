@@ -4,7 +4,8 @@ const fs = require('fs');
 const { findJestProjectRoot, getMissingLines, findNearestJestConfig } = require('./coverageRunner');
 const { writeSuperDashboardJestSummary } = require('./superDashboardPersist');
 const { buildCollectCoverageFromPatterns, unionCollectCoverageFrom } = require('../utils/coverageGlobs');
-const { resolveCollectCoverageScope, findSourceRootUnder, relativeToProject } = require('../utils/sourceRoot');
+const { resolveCollectCoverageScope, relativeToProject } = require('../utils/sourceRoot');
+const { buildJestSourceScopeByRepoFolder } = require('../data/appsCatalog');
 const { ensureGitignoredConfigStubs } = require('../utils/ensureJestConfigStubs');
 const { canonicalPathKey, normalizeRelativeKey } = require('../utils/coverageMerge');
 const { resolveCoverageKeyToAbsolute, toDisplayRelativePath } = require('../utils/coveragePaths');
@@ -16,6 +17,27 @@ const {
     maskCommandLine
 } = require('../utils/repoCommandLogger');
 const { runResilientJestCoverage, findTestFiles } = require('./jestResilientCoverage');
+
+/** Clone-folder basename → sourceRoot for apps with scopeJestToSourceRoot (YouDrive/YouTravel). */
+const JEST_SOURCE_SCOPE_BY_REPO_FOLDER = buildJestSourceScopeByRepoFolder();
+
+/**
+ * Absolute Jest coverage/test scope when the catalog opts this clone into source-root scoping.
+ * Looked up from clone folder name (not jestRoot) so CoreUI `source/` is not treated as YouDrive.
+ * @param {string} clonePath
+ * @returns {string|null}
+ */
+function resolveFlaggedJestScopePath(clonePath) {
+    const rel = JEST_SOURCE_SCOPE_BY_REPO_FOLDER[path.basename(clonePath)];
+    if (!rel) {
+        return null;
+    }
+    const abs = rel === '.' ? path.resolve(clonePath) : path.join(clonePath, ...rel.split('/'));
+    if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
+        return abs;
+    }
+    return null;
+}
 
 /**
  * Resolve repo log name for a git invocation (clone targets repo folder, not parent cwd).
@@ -516,20 +538,25 @@ async function runTests(clonePath, sendProgress, branch) {
     // Stub gitignored config/config.js + theme.js so YouDrive/YouTravel suites can load
     ensureGitignoredConfigStubs(jestRoot);
 
-    // Resolve collectCoverageFrom in-process: union project allowlist with source-tree globs
+    // YouDrive/YouTravel only: union allowlist with sourceRoot globs. Other apps keep their Jest collectCoverageFrom.
+    // Skip require when jest.config.full-coverage.js is used (CoreUI): we never rename jest.config.js
+    // to .original, and the temp wrapper that consumes this list is not written.
+    const flaggedScopePath = resolveFlaggedJestScopePath(clonePath);
+    const flaggedScopeRel = flaggedScopePath ? relativeToProject(jestRoot, flaggedScopePath) : '';
     let resolvedCollectCoverageFrom = fallbackPatterns;
-    try {
-        const baseConfigForPatterns = baseConfigExists ? require(escapedBaseConfigPath) : {};
-        if (Array.isArray(baseConfigForPatterns.collectCoverageFrom) && baseConfigForPatterns.collectCoverageFrom.length) {
-            resolvedCollectCoverageFrom = unionCollectCoverageFrom(
-                baseConfigForPatterns.collectCoverageFrom,
-                coverageScope
-            );
-        } else if (baseConfigForPatterns.collectCoverageFrom) {
-            resolvedCollectCoverageFrom = baseConfigForPatterns.collectCoverageFrom;
+    if (!useFullCoverageConfig) {
+        try {
+            const baseConfigForPatterns = baseConfigExists ? require(escapedBaseConfigPath) : {};
+            if (Array.isArray(baseConfigForPatterns.collectCoverageFrom) && baseConfigForPatterns.collectCoverageFrom.length) {
+                resolvedCollectCoverageFrom = flaggedScopePath
+                    ? unionCollectCoverageFrom(baseConfigForPatterns.collectCoverageFrom, flaggedScopeRel)
+                    : baseConfigForPatterns.collectCoverageFrom;
+            } else if (baseConfigForPatterns.collectCoverageFrom) {
+                resolvedCollectCoverageFrom = baseConfigForPatterns.collectCoverageFrom;
+            }
+        } catch (err) {
+            console.warn(`[runTests] Could not load base collectCoverageFrom, using fallback: ${err.message}`);
         }
-    } catch (err) {
-        console.warn(`[runTests] Could not load base collectCoverageFrom, using fallback: ${err.message}`);
     }
     const collectCoverageFromJson = JSON.stringify(resolvedCollectCoverageFrom, null, 4).replace(/\n/g, '\n    ');
 
@@ -560,10 +587,11 @@ module.exports = (function () {
         }
     }
 
-    // Scope tests to catalog/detected source tree; Jest cwd stays at jestRoot (config parent)
-    const sourceRootPath = findSourceRootUnder(jestRoot) || jestRoot;
-    const sourceScopeRel = relativeToProject(jestRoot, sourceRootPath);
-    const testCandidates = findTestFiles(jestRoot, sourceScopeRel);
+    // Flagged apps: tests + coverage under catalog sourceRoot. Everyone else: full jestRoot (no --testPathPattern).
+    const sourceRootPath = flaggedScopePath || jestRoot;
+    const testCandidates = flaggedScopePath
+        ? findTestFiles(jestRoot, flaggedScopeRel)
+        : findTestFiles(jestRoot);
     const relRoot = path.relative(clonePath, jestRoot) || '.';
     sendProgress(
         'testing',

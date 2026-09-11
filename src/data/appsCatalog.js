@@ -18,8 +18,11 @@ const YOU_APPS = [
     {
         name: 'YouTravelUI',
         url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouTravelUI.git',
-        // Analyze/test components/; Jest config and package.json stay at clone root
+        // Analyze/test components/; Jest config and package.json stay at clone root.
+        // scopeJestToSourceRoot is clone-and-test only (union collectCoverageFrom + tests under sourceRoot).
+        // Analyzer sourceRoot is separate — do not set this flag on CoreUI or DriverCom.
         sourceRoot: 'components',
+        scopeJestToSourceRoot: true,
         defaultBranch: 'develop'
     },
     {
@@ -37,8 +40,11 @@ const YOU_APPS = [
     {
         name: 'YouDriveUI',
         url: 'https://git.we-support.se/Trapeze/TrapezeDRTYouDriveUI.git',
-        // Analyze/test components/; Jest config and package.json stay at clone root
+        // Analyze/test components/; Jest config and package.json stay at clone root.
+        // scopeJestToSourceRoot is clone-and-test only (union collectCoverageFrom + tests under sourceRoot).
+        // Analyzer sourceRoot is separate — do not set this flag on CoreUI or DriverCom.
         sourceRoot: 'components',
+        scopeJestToSourceRoot: true,
         defaultBranch: 'develop'
     },
     {
@@ -235,6 +241,30 @@ function buildSourceRootByRepoFolder() {
     return map;
 }
 
+/**
+ * Build repo folder basename → sourceRoot for clone-and-test Jest scoping.
+ * Only apps with scopeJestToSourceRoot: true (YouDrive/YouTravel). Analyzer-only
+ * sourceRoot (DriverCom, CoreUI) must not appear here — that would widen coverage.
+ * @returns {Record<string, string>}
+ */
+function buildJestSourceScopeByRepoFolder() {
+    const map = {};
+    for (const app of [...YOU_APPS, ...WE_APPS]) {
+        if (app.scopeJestToSourceRoot !== true) {
+            continue;
+        }
+        const folder = repoFolderKeyFromUrl(app.url);
+        if (!folder) {
+            continue;
+        }
+        const root = normalizeAppSourceRoot(app.sourceRoot);
+        if (root) {
+            map[folder] = root;
+        }
+    }
+    return map;
+}
+
 module.exports = {
     YOU_APPS,
     WE_APPS,
@@ -247,5 +277,6 @@ module.exports = {
     normalizeAppJunctions,
     normalizeAppSourceRoot,
     buildJunctionsByRepoFolder,
-    buildSourceRootByRepoFolder
+    buildSourceRootByRepoFolder,
+    buildJestSourceScopeByRepoFolder
 };

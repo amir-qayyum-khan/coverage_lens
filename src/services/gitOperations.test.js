@@ -258,6 +258,117 @@ describe('gitOperations', () => {
             expect(fs.existsSync(path.join(configDir, 'config.js'))).toBe(true);
             expect(fs.existsSync(path.join(configDir, 'theme.js'))).toBe(true);
         });
+
+        test('does not union collectCoverageFrom or scope tests for non-flagged apps', async () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTYouBookUI');
+            const srcDir = path.join(clonePath, 'src', 'pages');
+            fs.mkdirSync(srcDir, { recursive: true });
+            fs.writeFileSync(path.join(clonePath, 'package.json'), '{}', 'utf8');
+            fs.writeFileSync(
+                path.join(clonePath, 'jest.config.js'),
+                `module.exports = {
+  collectCoverageFrom: [
+    'src/pages/**/*.js',
+    '!src/pages/index.js'
+  ]
+};
+`,
+                'utf8'
+            );
+
+            findJestProjectRoot.mockReturnValue(clonePath);
+            findNearestJestConfig.mockReturnValue(path.join(clonePath, 'jest.config.js'));
+            findTestFiles.mockReturnValue([]);
+
+            let tempCfg = '';
+            runResilientJestCoverage.mockImplementation(async () => {
+                tempCfg = fs.readFileSync(path.join(clonePath, 'jest.config.js'), 'utf8');
+                return {
+                    success: true,
+                    hasCoverage: false,
+                    message: 'No coverage data generated',
+                    totalTests: 0,
+                    passedTests: 0,
+                    failedTests: 0,
+                    testSuites: 0,
+                    passedSuites: 0,
+                    failedSuites: 0,
+                    incompleteRun: false,
+                    failedTestFiles: [],
+                    exitCode: 0,
+                    diagnostics: { coverageExecutionMode: 'full', phasesUsed: ['full'] }
+                };
+            });
+
+            await runTests(clonePath, () => {}, 'developV2');
+
+            expect(tempCfg).toContain('src/pages/**/*.js');
+            expect(tempCfg).toContain('!src/pages/index.js');
+            expect(tempCfg).not.toContain('src/**/*.{js,jsx}');
+            expect(findTestFiles).toHaveBeenCalledWith(clonePath);
+            expect(runResilientJestCoverage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    jestRoot: clonePath,
+                    targetAnalysisPath: clonePath
+                })
+            );
+        });
+
+        test('does not require missing jest.config.js.original when full-coverage config exists', async () => {
+            const clonePath = path.join(tmpDir, 'TrapezeDRTCoreUI');
+            const jestRoot = path.join(clonePath, 'source');
+            const srcDir = path.join(jestRoot, 'src', 'components');
+            fs.mkdirSync(srcDir, { recursive: true });
+            fs.writeFileSync(path.join(jestRoot, 'package.json'), '{}', 'utf8');
+            const originalJestConfig = `module.exports = {
+  collectCoverageFrom: ['src/components/**/*.{js,jsx}']
+};
+`;
+            fs.writeFileSync(path.join(jestRoot, 'jest.config.js'), originalJestConfig, 'utf8');
+            fs.writeFileSync(
+                path.join(jestRoot, 'jest.config.full-coverage.js'),
+                "process.env.JEST_COVERAGE_FULL = '1';\nmodule.exports = require('./jest.config.js');\n",
+                'utf8'
+            );
+
+            findJestProjectRoot.mockReturnValue(jestRoot);
+            findNearestJestConfig.mockReturnValue(path.join(jestRoot, 'jest.config.js'));
+            findTestFiles.mockReturnValue([]);
+
+            const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+            runResilientJestCoverage.mockResolvedValue({
+                success: true,
+                hasCoverage: false,
+                message: 'No coverage data generated',
+                totalTests: 0,
+                passedTests: 0,
+                failedTests: 0,
+                testSuites: 0,
+                passedSuites: 0,
+                failedSuites: 0,
+                incompleteRun: false,
+                failedTestFiles: [],
+                exitCode: 0,
+                diagnostics: { coverageExecutionMode: 'full', phasesUsed: ['full'] }
+            });
+
+            await runTests(clonePath, () => {}, 'developV2');
+
+            const warnText = warnSpy.mock.calls.map((args) => args.join(' ')).join('\n');
+            warnSpy.mockRestore();
+
+            expect(warnText).not.toMatch(/Could not load base collectCoverageFrom/);
+            expect(runResilientJestCoverage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    jestRoot,
+                    jestConfigPath: path.join(jestRoot, 'jest.config.full-coverage.js'),
+                    targetAnalysisPath: jestRoot
+                })
+            );
+            expect(fs.readFileSync(path.join(jestRoot, 'jest.config.js'), 'utf8')).toBe(originalJestConfig);
+            expect(fs.existsSync(path.join(jestRoot, 'jest.config.js.original'))).toBe(false);
+        });
     });
 
 
