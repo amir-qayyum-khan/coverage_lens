@@ -1873,6 +1873,11 @@ body::before {
   line-height: 1.6;
 }
 
+.super-dashboard .super-dash-totals-row td {
+  font-weight: 600;
+  background: var(--bg-secondary);
+}
+
 /* ============================================
    Super Dashboard — Inline Credentials Panel
    ============================================ */

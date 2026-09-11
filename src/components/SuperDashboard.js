@@ -1,5 +1,37 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { YOU_APPS, WE_APPS, resolveRemoteCoverageBranches } from '../data/appsCatalog';
+
+/**
+ * Coerce a Jest summary field to a finite count (missing or invalid → 0).
+ * @param {unknown} n
+ * @returns {number}
+ */
+function toTestCount(n) {
+    const v = Number(n);
+    return Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Sum passed/failed/total for catalog apps whose Super Dashboard row loaded.
+ * Missing test fields count as 0. Incomplete-but-loaded rows are included.
+ * @param {Array<{ name: string }>} apps
+ * @param {Record<string, string>} rowStatus
+ * @param {Record<string, { tests?: { passedTests?: number, failedTests?: number, totalTests?: number } }>} remoteMetrics
+ * @returns {{ passedTests: number, failedTests: number, totalTests: number }}
+ */
+function sumLoadedTestCounts(apps, rowStatus, remoteMetrics) {
+    let passedTests = 0;
+    let failedTests = 0;
+    let totalTests = 0;
+    for (const app of apps) {
+        if (rowStatus[app.name] !== 'loaded') continue;
+        const tests = remoteMetrics[app.name]?.tests;
+        passedTests += toTestCount(tests?.passedTests);
+        failedTests += toTestCount(tests?.failedTests);
+        totalTests += toTestCount(tests?.totalTests);
+    }
+    return { passedTests, failedTests, totalTests };
+}
 
 /**
  * Super Dashboard — fetches coverage JSON from Gitea remote in parallel.
@@ -112,6 +144,25 @@ function SuperDashboard({
         return Number(n).toLocaleString();
     };
 
+    /**
+     * Three-line passed / failed / total cell, or em dash when tests are absent.
+     * @param {{ passedTests?: number, failedTests?: number, totalTests?: number }|null|undefined} tests
+     * @returns {JSX.Element}
+     */
+    const renderTestCountsCell = (tests) => {
+        if (!tests || typeof tests !== 'object') {
+            return <td className="coverage-cell">—</td>;
+        }
+        const failed = toTestCount(tests.failedTests);
+        return (
+            <td className="coverage-cell">
+                <div>{formatNum(tests.passedTests)} passed</div>
+                <div className={failed > 0 ? 'text-error' : undefined}>{formatNum(tests.failedTests)} failed</div>
+                <div>{formatNum(tests.totalTests)} total</div>
+            </td>
+        );
+    };
+
     const getCoverageClass = (pct) => {
         if (pct == null) return '';
         if (pct >= 80) return 'coverage-high';
@@ -172,6 +223,7 @@ function SuperDashboard({
                     {renderSkeletonCell()}
                     {renderSkeletonCell()}
                     {renderSkeletonCell()}
+                    {renderSkeletonCell()}
                     <td><div className="skeleton-pulse" style={{ height: '20px', width: '80px', borderRadius: '10px' }} /></td>
                 </tr>
             );
@@ -181,7 +233,7 @@ function SuperDashboard({
             return (
                 <tr key={app.name} className="no-data-row">
                     <td className="file-name">{app.name}</td>
-                    <td className="coverage-cell" colSpan={3} style={{ color: 'var(--text-secondary)', fontSize: '12px', textAlign: 'center' }}>
+                    <td className="coverage-cell" colSpan={4} style={{ color: 'var(--text-secondary)', fontSize: '12px', textAlign: 'center' }}>
                         {status === 'error' ? '⚠ Fetch error' : '— No coverage data found'}
                     </td>
                     <td />
@@ -202,6 +254,7 @@ function SuperDashboard({
                 {renderMetricCell(m?.lines)}
                 {renderMetricCell(m?.statements)}
                 {renderMetricCell(m?.branches)}
+                {renderTestCountsCell(m?.tests)}
                 <td style={{ textAlign: 'center' }}>
                     {renderBranchTag(m?.branch)}
                     {m?.tests?.incompleteRun && (
@@ -222,7 +275,7 @@ function SuperDashboard({
         );
     };
 
-    const renderTable = (title, apps) => (
+    const renderTable = (title, apps, footerLabel, sectionTotals) => (
         <div className="app-section super-dashboard-section">
             <h3 className="section-title">{title}</h3>
             <div className="results-container">
@@ -234,12 +287,23 @@ function SuperDashboard({
                                 <th>Line Coverage</th>
                                 <th>Stmt Coverage</th>
                                 <th>Branch Coverage</th>
+                                <th>Unit Tests</th>
                                 <th style={{ textAlign: 'center', width: 110 }}>Source Branch</th>
                             </tr>
                         </thead>
                         <tbody>
                             {apps.map(renderRow)}
                         </tbody>
+                        <tfoot>
+                            <tr className="super-dash-totals-row">
+                                <td className="file-name"><strong>{footerLabel}</strong></td>
+                                <td className="coverage-cell" />
+                                <td className="coverage-cell" />
+                                <td className="coverage-cell" />
+                                {renderTestCountsCell(sectionTotals)}
+                                <td />
+                            </tr>
+                        </tfoot>
                     </table>
                 </div>
             </div>
@@ -249,6 +313,19 @@ function SuperDashboard({
     const hasNoToken = !getCredentials()?.token;
     const loadedCount = Object.values(rowStatus).filter(s => s === 'loaded').length;
     const totalCount = YOU_APPS.length + WE_APPS.length;
+    const youTestTotals = useMemo(
+        () => sumLoadedTestCounts(YOU_APPS, rowStatus, remoteMetrics),
+        [rowStatus, remoteMetrics]
+    );
+    const weTestTotals = useMemo(
+        () => sumLoadedTestCounts(WE_APPS, rowStatus, remoteMetrics),
+        [rowStatus, remoteMetrics]
+    );
+    const grandTestTotals = useMemo(() => ({
+        passedTests: youTestTotals.passedTests + weTestTotals.passedTests,
+        failedTests: youTestTotals.failedTests + weTestTotals.failedTests,
+        totalTests: youTestTotals.totalTests + weTestTotals.totalTests
+    }), [youTestTotals, weTestTotals]);
 
     return (
         <div className="dashboard fade-in super-dashboard">
@@ -256,6 +333,9 @@ function SuperDashboard({
                 <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--spacing-md)' }}>
                     <div>
                         <h2 className="section-title" style={{ marginBottom: '4px' }}>Super Dashboard</h2>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                            All apps: {formatNum(grandTestTotals.passedTests)} passed · {formatNum(grandTestTotals.failedTests)} failed · {formatNum(grandTestTotals.totalTests)} total
+                        </div>
                         {lastFetchAt && (
                             <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
                                 Last refreshed: {lastFetchAt}
@@ -353,8 +433,8 @@ function SuperDashboard({
                 </p>
             </header>
 
-            {renderTable('You Apps', YOU_APPS)}
-            {renderTable('We Apps', WE_APPS)}
+            {renderTable('You Apps', YOU_APPS, 'You Apps total', youTestTotals)}
+            {renderTable('We Apps', WE_APPS, 'We Apps total', weTestTotals)}
         </div>
     );
 }
