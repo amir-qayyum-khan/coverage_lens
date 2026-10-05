@@ -171,42 +171,42 @@ def render(body: RenderRequest, x_render_secret: str | None = Header(default=Non
             "-c", "copy", str(silent),
         ])
 
-        # audio
-        audio_inputs: list[str] = []
-        filter_parts: list[str] = []
+        # audio — ffmpeg input 0 is silent video; narration/music follow at 1+
         narr = work / "narr.mp3"
         music = work / "music.mp3"
-        aidx = 0
-        if body.narrationUrl:
+        has_narr = bool(body.narrationUrl)
+        has_music = bool(body.musicUrl)
+        if has_narr:
             download(body.narrationUrl, narr)
-            audio_inputs += ["-i", str(narr)]
-            filter_parts.append(f"[{aidx}:a]volume=1.0[a{aidx}]")
-            aidx += 1
-        if body.musicUrl:
+        if has_music:
             download(body.musicUrl, music)
-            audio_inputs += ["-i", str(music)]
-            filter_parts.append(f"[{aidx}:a]volume={body.musicVolume}[a{aidx}]")
-            aidx += 1
 
         mixed = work / "with_audio.mp4"
-        if aidx == 0:
-            # generate silent audio track matching length
+        if not has_narr and not has_music:
             run([
                 "ffmpeg", "-y", "-i", str(silent),
                 "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
                 "-shortest", "-c:v", "copy", "-c:a", "aac", str(mixed),
             ])
-        elif aidx == 1:
+        elif has_narr and not has_music:
             run([
-                "ffmpeg", "-y", "-i", str(silent), *audio_inputs,
-                "-filter_complex", filter_parts[0] + f";[a0]aformat=sample_rates=44100:channel_layouts=stereo[aout]",
+                "ffmpeg", "-y", "-i", str(silent), "-i", str(narr),
+                "-filter_complex", "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,volume=1.0[aout]",
+                "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", str(mixed),
+            ])
+        elif has_music and not has_narr:
+            run([
+                "ffmpeg", "-y", "-i", str(silent), "-i", str(music),
+                "-filter_complex", f"[1:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={body.musicVolume}[aout]",
                 "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", str(mixed),
             ])
         else:
-            fc = ";".join(filter_parts) + ";[a0][a1]amix=inputs=2:duration=first:dropout_transition=2[aout]"
             run([
-                "ffmpeg", "-y", "-i", str(silent), *audio_inputs,
-                "-filter_complex", fc,
+                "ffmpeg", "-y", "-i", str(silent), "-i", str(narr), "-i", str(music),
+                "-filter_complex",
+                f"[1:a]aformat=sample_rates=44100:channel_layouts=stereo,volume=1.0[a0];"
+                f"[2:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={body.musicVolume}[a1];"
+                f"[a0][a1]amix=inputs=2:duration=first:dropout_transition=2[aout]",
                 "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", str(mixed),
             ])
 
