@@ -2,6 +2,7 @@
 """Shorts Factory ffmpeg render service — Ken Burns stills, concat, captions, ducking."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -15,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -65,6 +66,9 @@ def run(cmd: list[str]) -> None:
 
 
 def download(url: str, dest: Path) -> None:
+    if url.startswith("data:") and "," in url:
+        dest.write_bytes(base64.b64decode(url.split(",", 1)[1]))
+        return
     with httpx.Client(timeout=180.0, follow_redirects=True) as client:
         r = client.get(url)
         r.raise_for_status()
@@ -80,6 +84,19 @@ def escape_drawtext(s: str) -> str:
         .replace("\n", " ")
     )
 
+
+
+@APP.post("/upload")
+async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
+    suffix = Path(file.filename or "bin").suffix or ".bin"
+    safe_suffix = "".join(c for c in suffix if c.isalnum() or c in "._-")[:12] or ".bin"
+    file_id = f"{uuid.uuid4().hex}{safe_suffix}"
+    dest = FILES / file_id
+    data = await file.read()
+    if len(data) > 80_000_000:
+        raise HTTPException(413, "too_large")
+    dest.write_bytes(data)
+    return {"ok": True, "fileId": file_id, "urlPath": f"/files/{file_id}", "bytes": len(data)}
 
 @APP.get("/health")
 def health() -> dict[str, Any]:
