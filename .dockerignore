@@ -1,0 +1,6 @@
+*.b64
+*.txt
+set_vars.json
+update_service_args.json
+server_mini.py
+__pycache__
