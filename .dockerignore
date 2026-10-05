@@ -1,6 +1,7 @@
 *.b64
-*.txt
+server_mini.py
 set_vars.json
 update_service_args.json
-server_mini.py
-__pycache__
+start_*.txt
+__pycache__/
+.git/
