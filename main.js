@@ -25,6 +25,7 @@ const {
 } = require('./src/services/superDashboardKnownClones');
 const { readAppPreferences, writeAppPreferences } = require('./src/services/appPreferences');
 const { listImmediateChildDirectories } = require('./src/services/superDashboardParentScan');
+const { createAssistantServerManager } = require('./src/services/assistantServer');
 
 let mainWindow;
 let nodeInstallProgress = null;
@@ -142,6 +143,13 @@ ipcMain.handle('dialog:openDirectory', async (event, options = {}) => {
 
     return result.filePaths[0];
 });
+
+// Local AI assistant server (spawn or reuse)
+const assistantServerDir = process.env.AI_ASSISTANT_DIR || path.resolve(__dirname, '..', '..', 'AI', 'AI assistant');
+const assistantManager = createAssistantServerManager({ serverDir: assistantServerDir });
+ipcMain.handle('assistant:ensure', () => assistantManager.ensureRunning());
+ipcMain.handle('assistant:status', () => assistantManager.status());
+app.on('will-quit', () => assistantManager.stop());
 
 // Analyze folder for code metrics
 ipcMain.handle('analyze:folder', async (event, folderPath) => {

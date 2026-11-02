@@ -6,6 +6,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Open native folder selection dialog
     selectFolder: (options) => ipcRenderer.invoke('dialog:openDirectory', options),
 
+    // Local AI assistant server: start (or reuse) and query status
+    assistantEnsure: () => ipcRenderer.invoke('assistant:ensure'),
+    assistantStatus: () => ipcRenderer.invoke('assistant:status'),
+
     // Analyze a folder for code metrics (lines, statements)
     analyzeFolder: (folderPath) => ipcRenderer.invoke('analyze:folder', folderPath),
 
