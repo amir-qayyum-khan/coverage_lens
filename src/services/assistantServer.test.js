@@ -38,7 +38,7 @@ describe('assistantServer manager', () => {
         expect(spawn).toHaveBeenCalledWith(
             'node',
             [path.join(serverDir, 'packages', 'server', 'src', 'index.js'), '--config', path.join(serverDir, 'server.config.yaml')],
-            { cwd: serverDir, windowsHide: true }
+            { cwd: serverDir, windowsHide: true, stdio: 'ignore' }
         );
         expect(s).toMatchObject({ running: true, ready: false });
         m.stop();
@@ -102,6 +102,28 @@ describe('assistantServer manager', () => {
         const m = createAssistantServerManager({ serverDir, spawn, fetch });
         expect(await m.status()).toEqual({ running: false, url: 'http://127.0.0.1:7071', ready: false, error: null });
         expect(spawn).not.toHaveBeenCalled();
+    });
+
+    test('respawns after the spawned child exits', async () => {
+        const first = makeChild();
+        const second = makeChild();
+        const spawn = jest.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+        let up = false;
+        const fetch = jest.fn().mockImplementation(async () => {
+            if (!up) throw new Error('refused');
+            return okRes({ ok: true, ready: true });
+        });
+        const m = createAssistantServerManager({ serverDir, spawn, fetch, pollMs: 5, startTimeoutMs: 1000 });
+        setTimeout(() => { up = true; }, 5);
+        expect((await m.ensureRunning()).running).toBe(true);
+        first.emit('exit', 1, null);
+        up = false;
+        setTimeout(() => { up = true; }, 5);
+        expect((await m.ensureRunning()).running).toBe(true);
+        expect(spawn).toHaveBeenCalledTimes(2);
+        expect(first.kill).not.toHaveBeenCalled();
+        m.stop();
+        expect(second.kill).toHaveBeenCalledTimes(1);
     });
 
     test('stop kills only spawned child', async () => {

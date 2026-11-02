@@ -54,6 +54,9 @@ function createAssistantServerManager({
         const existing = await probe();
         if (existing) return existing;
 
+        // A previous spawn that never answered /health must not be orphaned.
+        stop();
+
         let failure = null;
         const args = [
             path.join(serverDir, 'packages', 'server', 'src', 'index.js'),
@@ -61,7 +64,7 @@ function createAssistantServerManager({
             path.join(serverDir, 'server.config.yaml')
         ];
         try {
-            child = spawn(nodePath, args, { cwd: serverDir, windowsHide: true });
+            child = spawn(nodePath, args, { cwd: serverDir, windowsHide: true, stdio: 'ignore' });
         } catch (e) {
             child = null;
             return notRunning(`Could not start assistant server: ${e.message}`);
