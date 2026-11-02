@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
     // Open native folder selection dialog
-    selectFolder: () => ipcRenderer.invoke('dialog:openDirectory'),
+    selectFolder: (options) => ipcRenderer.invoke('dialog:openDirectory', options),
 
     // Analyze a folder for code metrics (lines, statements)
     analyzeFolder: (folderPath) => ipcRenderer.invoke('analyze:folder', folderPath),

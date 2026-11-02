@@ -128,11 +128,13 @@ ipcMain.handle('fs:exists', async (_event, filePath) => {
 });
 
 // Open folder dialog
-ipcMain.handle('dialog:openDirectory', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+ipcMain.handle('dialog:openDirectory', async (event, options = {}) => {
+    const dialogOptions = {
         properties: ['openDirectory'],
-        title: 'Select Folder to Analyze'
-    });
+        title: (options && options.title) || 'Select Folder to Analyze'
+    };
+    if (options && options.defaultPath) dialogOptions.defaultPath = options.defaultPath;
+    const result = await dialog.showOpenDialog(mainWindow, dialogOptions);
 
     if (result.canceled) {
         return null;
