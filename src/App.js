@@ -6,6 +6,7 @@ import AnalysisLoader from './components/AnalysisLoader';
 import Dashboard from './components/Dashboard';
 import SuperDashboard from './components/SuperDashboard';
 import DetachedView from './components/DetachedView';
+import AssistantTab from './components/AssistantTab';
 import logo from './assets/logo.png';
 import { getBasename } from './utils/pathUtils';
 import {
@@ -17,6 +18,7 @@ import { lookupCoverageForAnalysis } from './utils/coverageMerge';
 
 function App() {
     const [view, setView] = useState('dashboard');
+    const [assistantOpened, setAssistantOpened] = useState(false);
     const [folderPath, setFolderPath] = useState('');
     const [analysisResults, setAnalysisResults] = useState(null);
     const [coverageResults, setCoverageResults] = useState(null);
@@ -364,6 +366,12 @@ function App() {
                         >
                             Code Analysis
                         </button>
+                        <button
+                            className={`nav-item ${view === 'assistant' ? 'active' : ''}`}
+                            onClick={() => { setAssistantOpened(true); setView('assistant'); }}
+                        >
+                            AI Assistant
+                        </button>
                     </nav>
                 </header>
             )}
@@ -376,6 +384,12 @@ function App() {
                     </div>
                 )}
 
+                {assistantOpened && (
+                    <div style={{ display: view === 'assistant' ? 'block' : 'none' }}>
+                        <AssistantTab knownClonePaths={superKnownClonePaths} />
+                    </div>
+                )}
+
                 {view === 'detached' ? (
                     <DetachedView />
                 ) : view === 'super' ? (
@@ -385,7 +399,7 @@ function App() {
                         onAddRepoFolder={handleAddSingleSuperRepoFolder}
                         busy={superDashBusy}
                     />
-                ) : view === 'dashboard' ? (
+                ) : view === 'assistant' ? null : view === 'dashboard' ? (
                     <Dashboard />
                 ) : (
                     <div className="analysis-view fade-in">
