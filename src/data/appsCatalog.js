@@ -109,7 +109,7 @@ const WE_APPS = [
     {
         name: 'FrameworkUI',
         url: 'https://git.we-support.se/Trapeze/TrapezeFrameworkUI.git',
-        defaultBranch: 'developV2'
+        defaultBranch: 'develop'
     },
     {
         name: 'DriverCom',

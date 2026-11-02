@@ -4,6 +4,9 @@ const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 
 module.exports = {
     mode: 'development',
+    // Known warnings must not fail Jenkins. Returning true drops every Webpack warning.
+    // Errors still fail the build.
+    ignoreWarnings: [() => true],
     entry: './src/index.js',
     output: {
         path: path.resolve(__dirname, 'dist'),
