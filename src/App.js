@@ -360,12 +360,7 @@ function App() {
                         >
                             Super Dashboard
                         </button>
-                        <button
-                            className={`nav-item ${view === 'analysis' ? 'active' : ''}`}
-                            onClick={() => setView('analysis')}
-                        >
-                            Code Analysis
-                        </button>
+                        {/* Code Analysis tab hidden for now; the 'analysis' view is still in place */}
                         <button
                             className={`nav-item ${view === 'assistant' ? 'active' : ''}`}
                             onClick={() => { setAssistantOpened(true); setView('assistant'); }}
