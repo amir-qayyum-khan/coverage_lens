@@ -26,7 +26,14 @@ function buildRunPayload(coverageResults, analysisResults) {
             hasCoverage: r.lineCoverage != null
         };
     });
+    const groups = (cr.diagnostics && cr.diagnostics.failureSummary && cr.diagnostics.failureSummary.groups) || [];
+    const failures = groups.map((g) => ({
+        reason: String(g.reason || ''),
+        count: Number(g.count) || 0,
+        tests: Array.isArray(g.tests) ? g.tests.map(String) : []
+    }));
     return {
+        failures,
         tests: {
             total: cr.totalTests || 0,
             passed: cr.passedTests || 0,

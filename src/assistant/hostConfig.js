@@ -105,10 +105,17 @@ function buildHostConfig({ youApps, weApps }) {
             {
                 name: 'get_run_summary',
                 description:
-                    'Summary of a test run that is ALREADY run or open in a window: how many tests passed/failed/total and the overall coverage of that run (lines, statements, branches, functions). Use for questions like "how many tests failed" or "what is the coverage of the run"; does not run tests',
+                    'Status, result or overview of a test run that is ALREADY run or open in a window: how many tests passed/failed/total and the overall coverage of that run (lines, statements, branches, functions). Use for questions like "what is the status of launch pad", "how many tests failed" or "what is the coverage of the run"; does not run tests',
                 params: { app: { entity: 'app', required: false } },
                 answer_template:
                     '{app} ({branch}): {passed} passed, {failed} failed of {total} tests. Run coverage: lines {lines}%, statements {statements}%, branches {branches}%, functions {functions}%.'
+            },
+            {
+                name: 'get_run_failures',
+                description:
+                    'Which tests are failing, and why, in a test run that is ALREADY run or open in a window. Use for "which test is failing", "why did tests fail", "what failed in pad"; does not run tests',
+                params: { app: { entity: 'app', required: false } },
+                answer_template: '{app}: {summary}'
             },
             {
                 name: 'get_run_path_coverage',

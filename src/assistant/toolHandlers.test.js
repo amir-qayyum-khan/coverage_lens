@@ -308,6 +308,23 @@ describe('run tools', () => {
         );
     });
 
+    it('failures lists failing tests with reasons', async () => {
+        const failures = [{ reason: 'Expected 1, received 2', count: 3, tests: ['Foo renders', 'Bar loads'] }];
+        const h = withRuns([doneRun('CoreUI', { failures })]);
+        const r = await h.get_run_failures({});
+        expect(r.app).toBe('CoreUI');
+        expect(r.failed).toBe(3);
+        expect(r.summary).toContain('Foo renders; Bar loads');
+        expect(r.summary).toContain('Expected 1, received 2');
+    });
+
+    it('failures says so when nothing failed or details are missing', async () => {
+        const ok = withRuns([doneRun('CoreUI', { tests: { total: 2, passed: 2, failed: 0 } })]);
+        expect((await ok.get_run_failures({})).summary).toBe('No tests failed.');
+        const none = withRuns([doneRun('CoreUI')]);
+        expect((await none.get_run_failures({})).summary).toMatch(/no failure details were captured/);
+    });
+
     it('says the run is still running', async () => {
         const h = withRuns([doneRun('CoreUI', { status: 'running', tests: null, coverage: null, files: [] })]);
         await expect(h.get_run_summary({})).rejects.toThrow(/still running/);

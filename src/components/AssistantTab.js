@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createAssistant } from '@ai-assistant/client';
 import { buildHostConfig } from '../assistant/hostConfig';
 import { createToolHandlers } from '../assistant/toolHandlers';
+import { formatRunSummary } from '../assistant/runSummary';
 import { fetchAppCoverage, sumLoadedTestCounts } from '../services/remoteCoverage';
 import { YOU_APPS, WE_APPS } from '../data/appsCatalog';
 import './AssistantTab.css';
@@ -23,6 +24,8 @@ function toolStatusText(tool, params) {
             return 'Reading the open test run…';
         case 'get_run_path_coverage':
             return `Summing run coverage for ${params && params.path}…`;
+        case 'get_run_failures':
+            return 'Looking at the failing tests…';
         case 'get_run_gaps':
             return 'Looking for coverage gaps in the run…';
         default:
@@ -30,7 +33,7 @@ function toolStatusText(tool, params) {
     }
 }
 
-function registerHandlers(assistant, knownClonePaths) {
+function registerHandlers(assistant, knownClonePaths, launchedRuns) {
     const handlers = createToolHandlers({
         electronAPI: window.electronAPI,
         youApps: YOU_APPS,
@@ -40,7 +43,15 @@ function registerHandlers(assistant, knownClonePaths) {
         sumLoadedTestCounts,
         listRuns: () => window.electronAPI.listRuns()
     });
-    Object.entries(handlers).forEach(([name, fn]) => assistant.registerTool(name, fn));
+    Object.entries(handlers).forEach(([name, fn]) => {
+        if (name !== 'run_unit_tests') return assistant.registerTool(name, fn);
+        // Remember runs launched from the chat so their summary is posted when they finish.
+        return assistant.registerTool(name, async (...args) => {
+            const result = await fn(...args);
+            if (launchedRuns && result) launchedRuns.push({ app: result.app, branch: result.branch });
+            return result;
+        });
+    });
 }
 
 function AssistantTab({ knownClonePaths = [] }) {
@@ -55,6 +66,7 @@ function AssistantTab({ knownClonePaths = [] }) {
     const clonePathsRef = useRef(knownClonePaths);
     const mountedRef = useRef(true);
     const listEndRef = useRef(null);
+    const launchedRunsRef = useRef([]);
 
     clonePathsRef.current = knownClonePaths;
 
@@ -73,7 +85,7 @@ function AssistantTab({ knownClonePaths = [] }) {
                 config: buildHostConfig({ youApps: YOU_APPS, weApps: WE_APPS })
             });
             assistantRef.current = assistant;
-            registerHandlers(assistant, clonePathsRef.current);
+            registerHandlers(assistant, clonePathsRef.current, launchedRunsRef.current);
         }
         if (s.ready) setPhase('ready');
         else setPhase(s.error ? 'modelError' : 'loading');
@@ -114,8 +126,22 @@ function AssistantTab({ knownClonePaths = [] }) {
 
     // Handlers capture knownClonePaths by value: re-register (overwrites) when it changes.
     useEffect(() => {
-        if (assistantRef.current) registerHandlers(assistantRef.current, knownClonePaths);
+        if (assistantRef.current) registerHandlers(assistantRef.current, knownClonePaths, launchedRunsRef.current);
     }, [knownClonePaths]);
+
+    // Post a summary to the chat when a run launched from the chat finishes.
+    useEffect(() => {
+        const api = window.electronAPI;
+        if (!api || typeof api.onRunFinished !== 'function') return undefined;
+        return api.onRunFinished((run) => {
+            if (!mountedRef.current || !run) return;
+            const launched = launchedRunsRef.current;
+            const i = launched.findIndex((l) => l.app === run.app && (l.branch || '') === (run.branch || ''));
+            if (i < 0) return;
+            launched.splice(i, 1);
+            setMessages((prev) => [...prev, { role: 'assistant', text: formatRunSummary(run) }]);
+        });
+    }, []);
 
     useEffect(() => {
         if (listEndRef.current && listEndRef.current.scrollIntoView) {

@@ -95,6 +95,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reportRun: (runId, payload) =>
         ipcRenderer.invoke('runs:report', { runId, ...(payload || {}) }),
     listRuns: () => ipcRenderer.invoke('runs:list'),
+    // Fires in the main window when a run window reports its result or error
+    onRunFinished: (callback) => {
+        const subscription = (_event, run) => callback(run);
+        ipcRenderer.on('runs:finished', subscription);
+        return () => {
+            ipcRenderer.removeListener('runs:finished', subscription);
+        };
+    },
 
     fileExists: (filePath) => ipcRenderer.invoke('fs:exists', filePath)
 });

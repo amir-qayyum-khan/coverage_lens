@@ -222,8 +222,24 @@ function createToolHandlers({ electronAPI, youApps, weApps, knownClonePaths, fet
         };
     }
 
+    async function get_run_failures({ app } = {}) { // eslint-disable-line camelcase
+        const run = await pickRun(app);
+        const failed = (run.tests && run.tests.failed) || 0;
+        const groups = run.failures || [];
+        const listed = groups.slice(0, 5).map((g) => {
+            const names = g.tests.slice(0, 3).join('; ');
+            return `${g.count} failing${names ? ` (${names})` : ''}: ${g.reason}`;
+        });
+        let summary;
+        if (!failed) summary = 'No tests failed.';
+        else if (!listed.length) summary = `${failed} test(s) failed, but no failure details were captured.`;
+        else summary = `${failed} test(s) failed. ${listed.join(' | ')}${groups.length > 5 ? ` and ${groups.length - 5} more error type(s)` : ''}`;
+        return { app: run.app, failed, summary };
+    }
+
     return {
         run_unit_tests,
+        get_run_failures,
         get_coverage,
         get_group_coverage,
         get_test_totals,

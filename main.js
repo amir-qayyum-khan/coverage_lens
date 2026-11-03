@@ -538,8 +538,11 @@ ipcMain.handle('app:openDetachedWindow', async (event, { app: appData, branch, t
 
 // Test-run memory for the AI assistant (cleared when the run window closes)
 ipcMain.handle('runs:report', async (event, { runId, result, error } = {}) => {
-    if (error) return runStore.fail(runId, error);
-    return runStore.complete(runId, result);
+    const ok = error ? runStore.fail(runId, error) : runStore.complete(runId, result);
+    if (ok && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('runs:finished', runStore.get(runId));
+    }
+    return ok;
 });
 
 ipcMain.handle('runs:list', async () => runStore.list());

@@ -23,13 +23,14 @@ describe('buildHostConfig', () => {
         expect(t.answer_template).toBe('{group}: {covered} / {total} {metric} covered ({pct}%) across {appsCounted} apps');
     });
 
-    it('defines the seven tools', () => {
+    it('defines the eight tools', () => {
         expect(cfg.tools.map((t) => t.name)).toEqual([
             'run_unit_tests',
             'get_coverage',
             'get_group_coverage',
             'get_test_totals',
             'get_run_summary',
+            'get_run_failures',
             'get_run_path_coverage',
             'get_run_gaps'
         ]);

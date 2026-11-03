@@ -23,7 +23,8 @@ function register({ id, app, branch } = {}) {
         error: null,
         tests: null,
         coverage: null,
-        files: []
+        files: [],
+        failures: []
     });
     while (runs.size > MAX_RUNS) {
         runs.delete(runs.keys().next().value);
@@ -46,6 +47,7 @@ function complete(id, result = {}) {
     run.tests = result.tests || null;
     run.coverage = result.coverage || null;
     run.files = Array.isArray(result.files) ? result.files : [];
+    run.failures = Array.isArray(result.failures) ? result.failures : [];
     return true;
 }
 
