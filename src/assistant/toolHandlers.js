@@ -5,6 +5,9 @@ const { sumLoadedCoverage } = require('../services/remoteCoverage');
 const { appAliases } = require('./hostConfig');
 
 const METRICS = ['lines', 'statements', 'branches'];
+const COMPLEX = 'For anything more complex, ask your administrator.';
+const NO_RUN = 'No test run is open. Ask me to run the unit tests for an app first.';
+const normPath = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
 
 const round1 = (v) => Math.round((Number.isFinite(Number(v)) ? Number(v) : 0) * 10) / 10;
 const baseName = (p) => String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
@@ -28,9 +31,9 @@ function knownAppWords(apps) {
 
 /**
  * @param {object} deps
- * @returns {{ run_unit_tests: Function, get_coverage: Function, get_test_totals: Function }}
+ * @returns {Record<string, Function>}
  */
-function createToolHandlers({ electronAPI, youApps, weApps, knownClonePaths, fetchAppCoverage, sumLoadedTestCounts }) {
+function createToolHandlers({ electronAPI, youApps, weApps, knownClonePaths, fetchAppCoverage, sumLoadedTestCounts, listRuns }) {
     const allApps = [...youApps, ...weApps];
     const appWords = knownAppWords(allApps);
     const findApp = (name) => {
@@ -118,7 +121,114 @@ function createToolHandlers({ electronAPI, youApps, weApps, knownClonePaths, fet
         return { items, appsCounted, appsWithoutData };
     }
 
-    return { run_unit_tests, get_coverage, get_group_coverage, get_test_totals };
+    /** Pick the most recent run (for the named app when given) or explain why there is none. */
+    async function pickRun(app) {
+        let runs = [];
+        try {
+            runs = (typeof listRuns === 'function' ? await listRuns() : null) || [];
+        } catch {
+            runs = [];
+        }
+        if (!runs.length) throw new Error(NO_RUN);
+        const run = app ? runs.find((r) => r.app === app) : runs[0];
+        if (!run) throw new Error(`No test run is open for ${app}. Ask me to run the unit tests for ${app} first.`);
+        if (run.status === 'running') {
+            throw new Error(`The test run for ${run.app} is still running. Ask again once it has finished.`);
+        }
+        if (run.status === 'error') {
+            throw new Error(`The test run for ${run.app} failed: ${run.error || 'unknown error'}. ${COMPLEX}`);
+        }
+        return run;
+    }
+
+    async function get_run_summary({ app } = {}) { // eslint-disable-line camelcase
+        const run = await pickRun(app);
+        const t = run.tests || {};
+        const c = run.coverage || {};
+        return {
+            app: run.app,
+            branch: run.branch || 'default branch',
+            passed: t.passed || 0,
+            failed: t.failed || 0,
+            total: t.total || 0,
+            lines: round1(c.lines && c.lines.pct),
+            statements: round1(c.statements && c.statements.pct),
+            branches: round1(c.branches && c.branches.pct),
+            functions: round1(c.functions && c.functions.pct),
+            status: run.status
+        };
+    }
+
+    async function get_run_path_coverage({ path, app } = {}) { // eslint-disable-line camelcase
+        const run = await pickRun(app);
+        const term = String(path || '').trim();
+        if (!term) throw new Error(`Tell me which path or folder to look at. ${COMPLEX}`);
+        const needle = normPath(term);
+        const matched = (run.files || []).filter((f) => normPath(f.path).includes(needle));
+        if (!matched.length) throw new Error(`No files in this run match "${term}". ${COMPLEX}`);
+        const items = METRICS.map((m) => {
+            const covered = matched.reduce((n, f) => n + ((f[m] && f[m].covered) || 0), 0);
+            const total = matched.reduce((n, f) => n + ((f[m] && f[m].total) || 0), 0);
+            return {
+                app: run.app,
+                path: term,
+                metric: m,
+                covered,
+                total,
+                pct: total ? round1((covered / total) * 100) : 0,
+                fileCount: matched.length
+            };
+        });
+        return { items, fileCount: matched.length };
+    }
+
+    async function get_run_gaps({ path, app } = {}) { // eslint-disable-line camelcase
+        const run = await pickRun(app);
+        const term = typeof path === 'string' ? path.trim() : '';
+        let files = run.files || [];
+        if (term) {
+            const needle = normPath(term);
+            files = files.filter((f) => normPath(f.path).includes(needle));
+            if (!files.length) throw new Error(`No files in this run match "${term}". ${COMPLEX}`);
+        }
+        const linePct = (f) => (f.lines && Number(f.lines.pct)) || 0;
+        const noCoverage = files.filter((f) => !f.hasCoverage).map((f) => f.path);
+        const zeroCoverage = files.filter((f) => f.hasCoverage && linePct(f) === 0).map((f) => f.path);
+        const lowest = files
+            .filter((f) => f.hasCoverage)
+            .sort((a, b) => linePct(a) - linePct(b))
+            .slice(0, 10)
+            .map((f) => ({ path: f.path, pct: round1(linePct(f)) }));
+        const list = (arr) => (arr.length > 15 ? `${arr.slice(0, 15).join(', ')} and ${arr.length - 15} more` : arr.join(', '));
+        const parts = [
+            noCoverage.length
+                ? `${noCoverage.length} file(s) have no coverage data: ${list(noCoverage)}.`
+                : 'Every file has coverage data.',
+            zeroCoverage.length
+                ? `${zeroCoverage.length} file(s) are at 0% line coverage: ${list(zeroCoverage)}.`
+                : 'No file is at 0% line coverage.',
+            lowest.length ? `Lowest line coverage: ${lowest.map((f) => `${f.path} (${f.pct}%)`).join(', ')}.` : ''
+        ];
+        return {
+            app: run.app,
+            scope: term ? ` (files matching "${term}")` : '',
+            fileCount: files.length,
+            noCoverage,
+            zeroCoverage,
+            lowest,
+            summary: parts.filter(Boolean).join(' ')
+        };
+    }
+
+    return {
+        run_unit_tests,
+        get_coverage,
+        get_group_coverage,
+        get_test_totals,
+        get_run_summary,
+        get_run_path_coverage,
+        get_run_gaps
+    };
 }
 
 module.exports = { createToolHandlers };

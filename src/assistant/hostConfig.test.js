@@ -19,8 +19,16 @@ describe('buildHostConfig', () => {
         expect(t.answer_template).toBe('{group}: {covered} / {total} {metric} covered ({pct}%) across {appsCounted} apps');
     });
 
-    it('defines the four tools', () => {
-        expect(cfg.tools.map((t) => t.name)).toEqual(['run_unit_tests', 'get_coverage', 'get_group_coverage', 'get_test_totals']);
+    it('defines the seven tools', () => {
+        expect(cfg.tools.map((t) => t.name)).toEqual([
+            'run_unit_tests',
+            'get_coverage',
+            'get_group_coverage',
+            'get_test_totals',
+            'get_run_summary',
+            'get_run_path_coverage',
+            'get_run_gaps'
+        ]);
         expect(cfg.tools[0].confirm).toBe('folder');
     });
 
@@ -39,6 +47,29 @@ describe('buildHostConfig', () => {
     });
 
     it('has assistant name and scope_message', () => {
-        expect(cfg.assistant.scope_message).toBe('I can run unit tests and answer coverage questions for You/We apps.');
+        expect(cfg.assistant.scope_message).toBe(
+            'I can run unit tests and answer coverage questions for You/We apps and for test runs you have open. For complex questions, please ask your administrator.'
+        );
+    });
+
+    it('defines get_run_summary', () => {
+        const t = cfg.tools.find((x) => x.name === 'get_run_summary');
+        expect(t.params).toEqual({ app: { entity: 'app', required: false } });
+        expect(t.description).toMatch(/ALREADY/);
+        expect(t.answer_template).toContain('{passed}');
+        expect(t.answer_template).toContain('{failed}');
+    });
+
+    it('defines get_run_path_coverage with a required path', () => {
+        const t = cfg.tools.find((x) => x.name === 'get_run_path_coverage');
+        expect(t.params.path).toEqual({ type: 'string', required: true });
+        expect(t.params.app).toEqual({ entity: 'app', required: false });
+        expect(t.answer_template).toContain('{fileCount}');
+    });
+
+    it('defines get_run_gaps with an optional path', () => {
+        const t = cfg.tools.find((x) => x.name === 'get_run_gaps');
+        expect(t.params.path).toEqual({ type: 'string', required: false });
+        expect(t.answer_template).toContain('{summary}');
     });
 });

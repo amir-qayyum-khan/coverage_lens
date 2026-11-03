@@ -26,7 +26,8 @@ function buildHostConfig({ youApps, weApps }) {
     return {
         assistant: {
             name: 'Voyagerr Assistant',
-            scope_message: 'I can run unit tests and answer coverage questions for You/We apps.'
+            scope_message:
+                'I can run unit tests and answer coverage questions for You/We apps and for test runs you have open. For complex questions, please ask your administrator.'
         },
         entities: {
             app,
@@ -70,6 +71,35 @@ function buildHostConfig({ youApps, weApps }) {
                 name: 'get_test_totals',
                 description: 'Number of unit tests (passed, failed, total) for a group of apps or all apps',
                 params: { group: { entity: 'group', required: false } }
+            },
+            {
+                name: 'get_run_summary',
+                description:
+                    'Summary of a test run that is ALREADY run or open in a window: how many tests passed/failed/total and the overall coverage of that run (lines, statements, branches, functions). Use for questions like "how many tests failed" or "what is the coverage of the run"; does not run tests',
+                params: { app: { entity: 'app', required: false } },
+                answer_template:
+                    '{app} ({branch}): {passed} passed, {failed} failed of {total} tests. Run coverage: lines {lines}%, statements {statements}%, branches {branches}%, functions {functions}%.'
+            },
+            {
+                name: 'get_run_path_coverage',
+                description:
+                    'Total coverage (lines, statements, branches) of the files in an already-run/open test run whose path contains a term, for example "booking" or "src/utils"; sums covered and total over all matching files',
+                params: {
+                    path: { type: 'string', required: true },
+                    app: { entity: 'app', required: false }
+                },
+                answer_template:
+                    '{app} run, files matching "{path}": {covered} / {total} {metric} covered ({pct}%) across {fileCount} files'
+            },
+            {
+                name: 'get_run_gaps',
+                description:
+                    'Coverage gaps in an already-run/open test run: files with no coverage data, files with 0% line coverage and the lowest-covered files, optionally only files whose path contains a term. Use for "any file missing coverage?"',
+                params: {
+                    path: { type: 'string', required: false },
+                    app: { entity: 'app', required: false }
+                },
+                answer_template: '{app} run{scope}: {summary}'
             }
         ]
     };

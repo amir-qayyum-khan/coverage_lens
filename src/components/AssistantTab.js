@@ -19,6 +19,12 @@ function toolStatusText(tool, params) {
             return 'Summing coverage…';
         case 'get_test_totals':
             return 'Summing unit tests…';
+        case 'get_run_summary':
+            return 'Reading the open test run…';
+        case 'get_run_path_coverage':
+            return `Summing run coverage for ${params && params.path}…`;
+        case 'get_run_gaps':
+            return 'Looking for coverage gaps in the run…';
         default:
             return '';
     }
@@ -31,7 +37,8 @@ function registerHandlers(assistant, knownClonePaths) {
         weApps: WE_APPS,
         knownClonePaths,
         fetchAppCoverage,
-        sumLoadedTestCounts
+        sumLoadedTestCounts,
+        listRuns: () => window.electronAPI.listRuns()
     });
     Object.entries(handlers).forEach(([name, fn]) => assistant.registerTool(name, fn));
 }
@@ -118,6 +125,12 @@ function AssistantTab({ knownClonePaths = [] }) {
 
     const send = useCallback(async (text) => {
         const message = String(text || '').trim();
+        if (message.toLowerCase() === '/clear') {
+            if (busy || phase !== 'ready') return;
+            setMessages([]);
+            setInput('');
+            return;
+        }
         const assistant = assistantRef.current;
         if (!message || !assistant || busy || phase !== 'ready') return;
         setMessages((prev) => [...prev, { role: 'user', text: message }]);
@@ -190,7 +203,7 @@ function AssistantTab({ knownClonePaths = [] }) {
                 <input
                     type="text"
                     className="assistant-input"
-                    placeholder="Ask about unit tests or coverage…"
+                    placeholder="Ask about unit tests or coverage… (/clear to clear the chat)"
                     value={input}
                     disabled={!canType}
                     onChange={(e) => setInput(e.target.value)}

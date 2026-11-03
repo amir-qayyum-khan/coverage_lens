@@ -233,3 +233,137 @@ describe('run_unit_tests branch sanitising', () => {
         }
     );
 });
+
+describe('run tools', () => {
+    const b = (covered, total) => ({ covered, total, pct: total ? (covered / total) * 100 : 0 });
+    const file = (path, l, st, br, hasCoverage = true) => ({
+        path,
+        lines: b(...l),
+        statements: b(...st),
+        branches: b(...br),
+        functions: b(0, 0),
+        hasCoverage
+    });
+    const doneRun = (app, extra = {}) => ({
+        id: `id-${app}`,
+        app,
+        branch: 'developV2',
+        status: 'done',
+        error: null,
+        tests: { total: 20, passed: 17, failed: 3, suites: 4, failedSuites: 1 },
+        coverage: { lines: b(75, 100), statements: b(80, 100), branches: b(1, 3), functions: b(9, 10) },
+        files: [
+            file('src/booking/Form.js', [8, 10], [9, 10], [1, 2]),
+            file('src/booking/List.js', [2, 10], [2, 10], [0, 2]),
+            file('src/Other.js', [10, 10], [10, 10], [2, 2]),
+            file('src/Zero.js', [0, 5], [0, 5], [0, 0]),
+            file('src/Missing.js', [0, 0], [0, 0], [0, 0], false)
+        ],
+        ...extra
+    });
+    const withRuns = (runs) => {
+        const { deps } = make();
+        deps.listRuns = jest.fn().mockResolvedValue(runs);
+        return createToolHandlers(deps);
+    };
+    const NO_RUN = 'No test run is open. Ask me to run the unit tests for an app first.';
+
+    it.each(['get_run_summary', 'get_run_path_coverage', 'get_run_gaps'])('%s reports no open run', async (name) => {
+        const h = withRuns([]);
+        await expect(h[name]({ path: 'x' })).rejects.toThrow(NO_RUN);
+    });
+
+    it('treats a missing listRuns dependency as no run', async () => {
+        const { handlers } = make();
+        await expect(handlers.get_run_summary({})).rejects.toThrow(NO_RUN);
+    });
+
+    it('summary uses the most recent run overall', async () => {
+        const h = withRuns([doneRun('CoreUI'), doneRun('CommonUI')]);
+        const r = await h.get_run_summary({});
+        expect(r).toMatchObject({ app: 'CoreUI', passed: 17, failed: 3, total: 20, lines: 75, statements: 80, branches: 33.3, functions: 90 });
+    });
+
+    it('summary selects the run for the named app', async () => {
+        const h = withRuns([doneRun('CoreUI'), doneRun('CommonUI', { tests: { total: 2, passed: 2, failed: 0 } })]);
+        const r = await h.get_run_summary({ app: 'CommonUI' });
+        expect(r).toMatchObject({ app: 'CommonUI', total: 2, failed: 0 });
+    });
+
+    it('says so when the named app has no run', async () => {
+        const h = withRuns([doneRun('CoreUI')]);
+        await expect(h.get_run_summary({ app: 'CommonUI' })).rejects.toThrow(
+            'No test run is open for CommonUI. Ask me to run the unit tests for CommonUI first.'
+        );
+    });
+
+    it('says the run is still running', async () => {
+        const h = withRuns([doneRun('CoreUI', { status: 'running', tests: null, coverage: null, files: [] })]);
+        await expect(h.get_run_summary({})).rejects.toThrow(/still running/);
+        await expect(h.get_run_gaps({})).rejects.toThrow(/still running/);
+    });
+
+    it('reports a failed run with the administrator hint', async () => {
+        const h = withRuns([doneRun('CoreUI', { status: 'error', error: 'clone failed' })]);
+        await expect(h.get_run_summary({})).rejects.toThrow(/clone failed.*ask your administrator/);
+    });
+
+    it('path coverage sums matching files case-insensitively', async () => {
+        const h = withRuns([doneRun('CoreUI')]);
+        const r = await h.get_run_path_coverage({ path: 'BOOKING' });
+        expect(r.fileCount).toBe(2);
+        expect(r.items).toEqual([
+            { app: 'CoreUI', path: 'BOOKING', metric: 'lines', covered: 10, total: 20, pct: 50, fileCount: 2 },
+            { app: 'CoreUI', path: 'BOOKING', metric: 'statements', covered: 11, total: 20, pct: 55, fileCount: 2 },
+            { app: 'CoreUI', path: 'BOOKING', metric: 'branches', covered: 1, total: 4, pct: 25, fileCount: 2 }
+        ]);
+    });
+
+    it('path coverage accepts backslash terms', async () => {
+        const h = withRuns([doneRun('CoreUI')]);
+        const r = await h.get_run_path_coverage({ path: 'src\\booking' });
+        expect(r.fileCount).toBe(2);
+    });
+
+    it('path coverage rejects a term that matches nothing', async () => {
+        const h = withRuns([doneRun('CoreUI')]);
+        await expect(h.get_run_path_coverage({ path: 'payments' })).rejects.toThrow(
+            'No files in this run match "payments". For anything more complex, ask your administrator.'
+        );
+    });
+
+    it('path coverage honours app selection', async () => {
+        const h = withRuns([doneRun('CoreUI'), doneRun('CommonUI', { files: [file('src/booking/X.js', [1, 1], [1, 1], [0, 0])] })]);
+        const r = await h.get_run_path_coverage({ path: 'booking', app: 'CommonUI' });
+        expect(r.fileCount).toBe(1);
+        expect(r.items[0].app).toBe('CommonUI');
+    });
+
+    it('gaps lists missing, zero and lowest files', async () => {
+        const h = withRuns([doneRun('CoreUI')]);
+        const r = await h.get_run_gaps({});
+        expect(r.noCoverage).toEqual(['src/Missing.js']);
+        expect(r.zeroCoverage).toEqual(['src/Zero.js']);
+        expect(r.lowest.map((f) => f.path)).toEqual(['src/Zero.js', 'src/booking/List.js', 'src/booking/Form.js', 'src/Other.js']);
+        expect(r.scope).toBe('');
+        expect(r.summary).toContain('1 file(s) have no coverage data: src/Missing.js.');
+        expect(r.summary).toContain('1 file(s) are at 0% line coverage: src/Zero.js.');
+    });
+
+    it('gaps caps the lowest list at 10 and can filter by path', async () => {
+        const many = Array.from({ length: 14 }, (_, i) => file(`src/m/f${i}.js`, [i + 1, 20], [1, 1], [0, 0]));
+        const h = withRuns([doneRun('CoreUI', { files: many })]);
+        expect((await h.get_run_gaps({})).lowest).toHaveLength(10);
+        const r = await h.get_run_gaps({ path: 'f13' });
+        expect(r.fileCount).toBe(1);
+        expect(r.scope).toBe(' (files matching "f13")');
+        await expect(h.get_run_gaps({ path: 'zzz' })).rejects.toThrow(/No files in this run match "zzz"/);
+    });
+
+    it('gaps reports a clean run', async () => {
+        const h = withRuns([doneRun('CoreUI', { files: [file('src/a.js', [5, 10], [5, 10], [0, 0])] })]);
+        const r = await h.get_run_gaps({});
+        expect(r.summary).toContain('Every file has coverage data.');
+        expect(r.summary).toContain('No file is at 0% line coverage.');
+    });
+});

@@ -129,4 +129,34 @@ describe('AssistantTab', () => {
         release({ type: 'answer', text: 'done' });
         await waitFor(() => expect(input).not.toBeDisabled());
     });
+
+    test('/clear removes the messages without sending to the assistant', async () => {
+        mockSend.mockResolvedValue({ type: 'answer', text: 'an answer' });
+        render(<AssistantTab knownClonePaths={[]} />);
+        await waitFor(() => expect(screen.getByPlaceholderText(/ask about/i)).not.toBeDisabled());
+        ask('hello');
+        expect(await screen.findByText('an answer')).toBeInTheDocument();
+        await waitFor(() => expect(screen.getByPlaceholderText(/ask about/i)).not.toBeDisabled());
+        ask('  /CLEAR ');
+        await waitFor(() => expect(screen.queryByText('an answer')).not.toBeInTheDocument());
+        expect(screen.queryByText('hello')).not.toBeInTheDocument();
+        expect(screen.getByPlaceholderText(/ask about/i).value).toBe('');
+        expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+
+    test('placeholder mentions /clear', async () => {
+        render(<AssistantTab knownClonePaths={[]} />);
+        expect(await screen.findByPlaceholderText(/\/clear to clear the chat/)).toBeInTheDocument();
+    });
+
+    test('shows status text for the run tools', async () => {
+        mockSend.mockImplementation((msg, opts) => {
+            opts.onToolStart({ tool: 'get_run_path_coverage', params: { path: 'booking' } });
+            return new Promise(() => {});
+        });
+        render(<AssistantTab knownClonePaths={[]} />);
+        await waitFor(() => expect(screen.getByPlaceholderText(/ask about/i)).not.toBeDisabled());
+        ask('coverage of booking');
+        expect(await screen.findByText('Summing run coverage for booking…')).toBeInTheDocument();
+    });
 });
