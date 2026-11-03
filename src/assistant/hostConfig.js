@@ -22,8 +22,8 @@ function buildHostConfig({ youApps, weApps }) {
         entities: {
             app,
             group: {
-                you: ['you apps', 'you'],
-                we: ['we apps', 'we']
+                you: ['you apps', 'you group'],
+                we: ['we apps', 'we group']
             }
         },
         tools: [

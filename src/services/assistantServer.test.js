@@ -145,4 +145,22 @@ describe('assistantServer manager', () => {
         m.stop();
         expect(child.kill).toHaveBeenCalledTimes(1);
     });
+
+    test('200 without ok:true is not ours: no spawn, port-in-use error', async () => {
+        const spawn = jest.fn();
+        const fetch = jest.fn().mockResolvedValue(okRes({ hello: 'other service' }));
+        const m = createAssistantServerManager({ serverDir, spawn, fetch });
+        const s = await m.ensureRunning();
+        expect(spawn).not.toHaveBeenCalled();
+        expect(s).toEqual({ running: false, url: 'http://127.0.0.1:7071', ready: false, error: 'Port 7071 is in use by another service' });
+    });
+
+    test('200 with non-JSON body is not ours', async () => {
+        const spawn = jest.fn();
+        const fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => { throw new Error('bad json'); } });
+        const m = createAssistantServerManager({ serverDir, spawn, fetch });
+        const s = await m.status();
+        expect(spawn).not.toHaveBeenCalled();
+        expect(s).toMatchObject({ running: false, error: 'Port 7071 is in use by another service' });
+    });
 });

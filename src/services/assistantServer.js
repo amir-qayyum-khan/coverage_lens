@@ -32,14 +32,22 @@ function createAssistantServerManager({
 
     const notRunning = (error = null) => ({ running: false, url, ready: false, error });
 
-    /** @returns {Promise<object|null>} Status if /health answered, else null. */
+    const IN_USE = `Port ${port} is in use by another service`;
+
+    /** @returns {Promise<object|null>} Status if /health answered (foreign:true if it is not our server), else null. */
     async function probe() {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
         try {
             const res = await fetch(`${url}/health`, { signal: controller.signal });
             if (!res || !res.ok) return null;
-            const body = (await res.json()) || {};
+            let body = null;
+            try {
+                body = await res.json();
+            } catch (e) {
+                body = null;
+            }
+            if (!body || body.ok !== true) return { foreign: true };
             return { running: true, url, ready: body.ready === true, error: body.error ?? null };
         } catch (e) {
             return null;
@@ -52,6 +60,7 @@ function createAssistantServerManager({
 
     async function start() {
         const existing = await probe();
+        if (existing && existing.foreign) return notRunning(IN_USE);
         if (existing) return existing;
 
         // A previous spawn that never answered /health must not be orphaned.
@@ -82,6 +91,10 @@ function createAssistantServerManager({
         const deadline = Date.now() + startTimeoutMs;
         while (!failure && Date.now() < deadline) {
             const s = await probe();
+            if (s && s.foreign) {
+                stop();
+                return notRunning(IN_USE);
+            }
             if (s) return s;
             if (failure) break;
             await sleep(pollMs);
@@ -103,7 +116,9 @@ function createAssistantServerManager({
     }
 
     async function status() {
-        return (await probe()) || notRunning();
+        const s = await probe();
+        if (s && s.foreign) return notRunning(IN_USE);
+        return s || notRunning();
     }
 
     function stop() {

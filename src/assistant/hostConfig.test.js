@@ -9,7 +9,7 @@ describe('buildHostConfig', () => {
         expect(cfg.entities.app.CommonUI).toEqual(expect.arrayContaining(['we common', 'common', 'commonui']));
         expect(cfg.entities.app.CoreUI).toEqual(expect.arrayContaining(['wecore', 'we core', 'core']));
         expect(cfg.entities.app.LaunchpadUI).toContain('launchpadui');
-        expect(cfg.entities.group).toEqual({ you: ['you apps', 'you'], we: ['we apps', 'we'] });
+        expect(cfg.entities.group).toEqual({ you: ['you apps', 'you group'], we: ['we apps', 'we group'] });
     });
 
     it('defines the three tools', () => {
