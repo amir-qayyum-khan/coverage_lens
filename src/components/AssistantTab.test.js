@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import AssistantTab from './AssistantTab';
 
 const mockSend = jest.fn();
@@ -72,5 +72,61 @@ describe('AssistantTab', () => {
         ask('run tests');
         fireEvent.click(await screen.findByRole('button', { name: 'CommonUI' }));
         await waitFor(() => expect(mockSend).toHaveBeenCalledWith('CommonUI', expect.any(Object)));
+    });
+
+    test('model load error stops polling and shows retry state', async () => {
+        jest.useFakeTimers();
+        try {
+            const failed = { running: true, url: 'http://127.0.0.1:7071', ready: false, error: 'model file missing' };
+            window.electronAPI.assistantEnsure.mockResolvedValue(failed);
+            window.electronAPI.assistantStatus.mockResolvedValue(failed);
+            render(<AssistantTab knownClonePaths={[]} />);
+            expect(await screen.findByText("Model not installed / cannot load: model file missing")).toBeInTheDocument();
+            expect(screen.queryByText(/Loading model/)).not.toBeInTheDocument();
+            act(() => { jest.advanceTimersByTime(10000); });
+            expect(window.electronAPI.assistantStatus).not.toHaveBeenCalled();
+            expect(screen.getByPlaceholderText(/ask about/i)).toBeDisabled();
+            window.electronAPI.assistantEnsure.mockResolvedValue(READY);
+            fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+            await waitFor(() => expect(screen.getByPlaceholderText(/ask about/i)).not.toBeDisabled());
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('send rejection shows warning message; SERVER_UNREACHABLE shows banner', async () => {
+        const err = Object.assign(new Error('server went away'), { code: 'SERVER_UNREACHABLE' });
+        mockSend.mockRejectedValue(err);
+        render(<AssistantTab knownClonePaths={[]} />);
+        await waitFor(() => expect(screen.getByPlaceholderText(/ask about/i)).not.toBeDisabled());
+        ask('hello');
+        expect(await screen.findByText('⚠️ server went away')).toBeInTheDocument();
+        expect(await screen.findByText(/Assistant server not running: server went away/)).toBeInTheDocument();
+    });
+
+    test('other send rejection shows warning without banner', async () => {
+        mockSend.mockRejectedValue(new Error('bad reply'));
+        render(<AssistantTab knownClonePaths={[]} />);
+        await waitFor(() => expect(screen.getByPlaceholderText(/ask about/i)).not.toBeDisabled());
+        ask('hello');
+        expect(await screen.findByText('⚠️ bad reply')).toBeInTheDocument();
+        expect(screen.queryByText(/Assistant server not running/)).not.toBeInTheDocument();
+    });
+
+    test('input and Send are disabled while busy and Enter does not resend', async () => {
+        let release;
+        mockSend.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+        render(<AssistantTab knownClonePaths={[]} />);
+        await waitFor(() => expect(screen.getByPlaceholderText(/ask about/i)).not.toBeDisabled());
+        ask('first');
+        const input = screen.getByPlaceholderText(/ask about/i);
+        await waitFor(() => expect(input).toBeDisabled());
+        expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+        fireEvent.change(input, { target: { value: 'second' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+        fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+        expect(mockSend).toHaveBeenCalledTimes(1);
+        release({ type: 'answer', text: 'done' });
+        await waitFor(() => expect(input).not.toBeDisabled());
     });
 });

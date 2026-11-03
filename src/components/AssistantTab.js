@@ -35,7 +35,7 @@ function registerHandlers(assistant, knownClonePaths) {
 }
 
 function AssistantTab({ knownClonePaths = [] }) {
-    // phase: 'starting' | 'down' | 'loading' | 'ready'
+    // phase: 'starting' | 'down' | 'loading' | 'modelError' | 'ready'
     const [phase, setPhase] = useState('starting');
     const [serverError, setServerError] = useState('');
     const [messages, setMessages] = useState([]);
@@ -66,7 +66,8 @@ function AssistantTab({ knownClonePaths = [] }) {
             assistantRef.current = assistant;
             registerHandlers(assistant, clonePathsRef.current);
         }
-        setPhase(s.ready ? 'ready' : 'loading');
+        if (s.ready) setPhase('ready');
+        else setPhase(s.error ? 'modelError' : 'loading');
     }, []);
 
     const ensure = useCallback(async () => {
@@ -151,6 +152,12 @@ function AssistantTab({ knownClonePaths = [] }) {
             {phase === 'down' && (
                 <div className="error-banner assistant-banner">
                     <span>Assistant server not running{serverError ? `: ${serverError}` : ''}</span>
+                    <button className="btn btn-secondary" onClick={ensure}>Retry</button>
+                </div>
+            )}
+            {phase === 'modelError' && (
+                <div className="error-banner assistant-banner">
+                    <span>Model not installed / cannot load: {serverError}</span>
                     <button className="btn btn-secondary" onClick={ensure}>Retry</button>
                 </div>
             )}
