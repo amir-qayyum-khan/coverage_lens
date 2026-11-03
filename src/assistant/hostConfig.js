@@ -29,9 +29,14 @@ function buildHostConfig({ youApps, weApps }) {
         tools: [
             {
                 name: 'run_unit_tests',
-                description: 'Run Jest unit tests with coverage for one app',
-                params: { app: { entity: 'app', required: true } },
-                confirm: 'folder'
+                description: 'Run Jest unit tests with coverage for one app, optionally on a given git branch',
+                params: {
+                    app: { entity: 'app', required: true },
+                    branch: { type: 'string', required: false }
+                },
+                confirm: 'folder',
+                answer_template:
+                    'Opened a window for {app} on branch {branch}: it clones the repo and runs the unit tests with coverage. Progress and results are shown there.'
             },
             {
                 name: 'get_coverage',

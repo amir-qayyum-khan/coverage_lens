@@ -12,7 +12,7 @@ function toolStatusText(tool, params) {
     const app = params && params.app;
     switch (tool) {
         case 'run_unit_tests':
-            return `Running tests for ${app}…`;
+            return `Opening test run for ${app}…`;
         case 'get_coverage':
             return `Fetching coverage for ${app}…`;
         case 'get_test_totals':

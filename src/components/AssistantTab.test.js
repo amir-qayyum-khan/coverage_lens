@@ -58,9 +58,9 @@ describe('AssistantTab', () => {
         render(<AssistantTab knownClonePaths={[]} />);
         await waitFor(() => expect(screen.getByPlaceholderText(/ask about/i)).not.toBeDisabled());
         ask('execute we common test');
-        expect(await screen.findByText('Running tests for CommonUI…')).toBeInTheDocument();
+        expect(await screen.findByText('Opening test run for CommonUI…')).toBeInTheDocument();
         release({ type: 'answer', text: 'done' });
-        await waitFor(() => expect(screen.queryByText('Running tests for CommonUI…')).not.toBeInTheDocument());
+        await waitFor(() => expect(screen.queryByText('Opening test run for CommonUI…')).not.toBeInTheDocument());
     });
 
     test('clarify options clickable', async () => {

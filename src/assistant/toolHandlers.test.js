@@ -1,5 +1,5 @@
-const { createToolHandlers, summarizeCoverageRun } = require('./toolHandlers');
-const { YOU_APPS, WE_APPS, repoFolderKeyFromUrl } = require('../data/appsCatalog');
+const { createToolHandlers } = require('./toolHandlers');
+const { YOU_APPS, WE_APPS, repoFolderKeyFromUrl, resolveAppDefaultBranch } = require('../data/appsCatalog');
 
 const commonUI = WE_APPS.find((a) => a.name === 'CommonUI');
 const commonPath = `D:\\repos\\${repoFolderKeyFromUrl(commonUI.url)}`;
@@ -19,7 +19,7 @@ function make(paths = ['D:\\repos\\Other', commonPath]) {
         return { passedTests: p, failedTests: f, totalTests: t };
     });
     const deps = {
-        electronAPI: { selectFolder: jest.fn(), runCoverage: jest.fn() },
+        electronAPI: { selectFolder: jest.fn(), openDetachedWindow: jest.fn().mockResolvedValue(undefined) },
         youApps: YOU_APPS,
         weApps: WE_APPS,
         knownClonePaths: paths,
@@ -30,11 +30,11 @@ function make(paths = ['D:\\repos\\Other', commonPath]) {
 }
 
 describe('run_unit_tests', () => {
-    it('rejects when folder selection is cancelled', async () => {
+    it('rejects and opens no window when folder selection is cancelled', async () => {
         const { deps, handlers } = make();
         deps.electronAPI.selectFolder.mockResolvedValue(null);
         await expect(handlers.run_unit_tests({ app: 'CommonUI' }, {})).rejects.toThrow('No folder selected');
-        expect(deps.electronAPI.runCoverage).not.toHaveBeenCalled();
+        expect(deps.electronAPI.openDetachedWindow).not.toHaveBeenCalled();
     });
 
     it('throws on unknown app', async () => {
@@ -42,66 +42,47 @@ describe('run_unit_tests', () => {
         await expect(handlers.run_unit_tests({ app: 'Nope' }, {})).rejects.toThrow('Unknown app: Nope');
     });
 
-    it('throws the runCoverage error', async () => {
+    it('defaults the dialog to the parent of the hinted clone and opens the window', async () => {
         const { deps, handlers } = make();
-        deps.electronAPI.selectFolder.mockResolvedValue('D:\\x');
-        deps.electronAPI.runCoverage.mockResolvedValue({ success: false, error: 'boom' });
-        await expect(handlers.run_unit_tests({ app: 'CommonUI' }, {})).rejects.toThrow('boom');
+        deps.electronAPI.selectFolder.mockResolvedValue('D:\\base');
+        const res = await handlers.run_unit_tests({ app: 'CommonUI', branch: 'release/2.1' }, {});
+        expect(deps.electronAPI.selectFolder).toHaveBeenCalledWith({
+            title: 'Select folder to clone CommonUI into',
+            defaultPath: 'D:\\repos'
+        });
+        expect(deps.electronAPI.openDetachedWindow).toHaveBeenCalledWith(commonUI, 'release/2.1', 'D:\\base');
+        expect(res).toEqual({ app: 'CommonUI', folder: 'D:\\base', branch: 'release/2.1' });
     });
 
-    it('returns a summary on success', async () => {
+    it('trims an explicit branch', async () => {
         const { deps, handlers } = make();
-        deps.electronAPI.selectFolder.mockResolvedValue(commonPath);
-        deps.electronAPI.runCoverage.mockResolvedValue({
-            success: true,
-            data: {
-                totalTests: 10,
-                passedTests: 8,
-                failedTests: 2,
-                summary: {
-                    lines: { covered: 50, total: 100, pct: 50 },
-                    statements: { covered: 5, total: 10, pct: 50 },
-                    branches: { covered: 1, total: 4, pct: 25 }
-                },
-                files: [
-                    { relativePath: 'a.js', lines: { pct: 90 } },
-                    { relativePath: 'b.js', lines: { pct: 10 } },
-                    { relativePath: 'c.js', lines: { pct: 50 } }
-                ],
-                diagnostics: { failedTestFiles: ['x.test.js'] },
-                message: 'done'
-            }
-        });
-        const res = await handlers.run_unit_tests({ app: 'CommonUI' }, {});
-        expect(deps.electronAPI.selectFolder).toHaveBeenCalledWith({
-            title: 'Confirm folder for CommonUI',
-            defaultPath: commonPath
-        });
-        expect(deps.electronAPI.runCoverage).toHaveBeenCalledWith(commonPath);
-        expect(res.tests).toEqual({ total: 10, passed: 8, failed: 2 });
-        expect(res.coverage.lines.pct).toBe(50);
-        expect(res.lowestCoverageFiles[0]).toEqual({ file: 'b.js', linesPct: 10 });
-        expect(res.failedTestFiles).toEqual(['x.test.js']);
-        expect(res.message).toBe('done');
+        deps.electronAPI.selectFolder.mockResolvedValue('D:\\base');
+        const res = await handlers.run_unit_tests({ app: 'CommonUI', branch: '  developV2 ' }, {});
+        expect(res.branch).toBe('developV2');
+        expect(deps.electronAPI.openDetachedWindow.mock.calls[0][1]).toBe('developV2');
+    });
+
+    it.each([[undefined], [''], ['   ']])('falls back to the catalog default branch for %p', async (branch) => {
+        const { deps, handlers } = make();
+        deps.electronAPI.selectFolder.mockResolvedValue('D:\\base');
+        const res = await handlers.run_unit_tests({ app: 'CommonUI', branch }, {});
+        const expected = resolveAppDefaultBranch(commonUI);
+        expect(res.branch).toBe(expected);
+        expect(deps.electronAPI.openDetachedWindow).toHaveBeenCalledWith(commonUI, expected, 'D:\\base');
     });
 
     it('matches the clone-path hint case-insensitively', async () => {
         const { deps, handlers } = make(['D:\\repos\\Other', commonPath.toLowerCase()]);
         deps.electronAPI.selectFolder.mockResolvedValue(null);
         await expect(handlers.run_unit_tests({ app: 'CommonUI' }, {})).rejects.toThrow();
-        expect(deps.electronAPI.selectFolder.mock.calls[0][0].defaultPath).toBe(commonPath.toLowerCase());
+        expect(deps.electronAPI.selectFolder.mock.calls[0][0].defaultPath).toBe('d:\\repos');
     });
-});
 
-describe('summarizeCoverageRun', () => {
-    it('caps lists and tolerates missing data', () => {
-        const files = Array.from({ length: 30 }, (_, i) => ({ relativePath: `f${i}.js`, lines: { pct: 100 - i } }));
-        const failed = Array.from({ length: 30 }, (_, i) => `t${i}`);
-        const r = summarizeCoverageRun('A', 'D:\\a', { files, diagnostics: { failedTestFiles: failed } });
-        expect(r.lowestCoverageFiles).toHaveLength(10);
-        expect(r.lowestCoverageFiles[0].file).toBe('f29.js');
-        expect(r.failedTestFiles).toHaveLength(20);
-        expect(r.tests).toEqual({ total: 0, passed: 0, failed: 0 });
+    it('passes no default path when there is no hint', async () => {
+        const { deps, handlers } = make([]);
+        deps.electronAPI.selectFolder.mockResolvedValue(null);
+        await expect(handlers.run_unit_tests({ app: 'CommonUI' }, {})).rejects.toThrow();
+        expect(deps.electronAPI.selectFolder.mock.calls[0][0].defaultPath).toBeUndefined();
     });
 });
 

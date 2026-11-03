@@ -17,6 +17,14 @@ describe('buildHostConfig', () => {
         expect(cfg.tools[0].confirm).toBe('folder');
     });
 
+    it('run_unit_tests has optional branch param and answer_template', () => {
+        const t = cfg.tools[0];
+        expect(t.params.branch).toEqual({ type: 'string', required: false });
+        expect(t.description).toMatch(/branch/);
+        expect(t.answer_template).toContain('{app}');
+        expect(t.answer_template).toContain('{branch}');
+    });
+
     it('uses the spec answer_template for get_coverage', () => {
         const t = cfg.tools.find((x) => x.name === 'get_coverage');
         expect(t.answer_template).toBe('{app}: {covered} / {total} {metric} covered ({pct}%)');
