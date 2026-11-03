@@ -17,6 +17,7 @@ const { runCoverage } = require('./src/services/coverageRunner');
 const { checkNodeInstalled, checkPackagesInstalled, installNode, TARGET_NODE_VERSION } = require('./src/services/nodeInstaller');
 const { checkGitInstalled, installGit } = require('./src/services/gitChecker');
 const { cloneAndTest, pushCoverageReport } = require('./src/services/gitOperations');
+const runStore = require('./src/services/runStore');
 const { loadCachedSuperDashboardMetrics } = require('./src/services/superDashboardPersist');
 const {
     readKnownClonePathsWithLegacyImport,
@@ -25,6 +26,7 @@ const {
 } = require('./src/services/superDashboardKnownClones');
 const { readAppPreferences, writeAppPreferences } = require('./src/services/appPreferences');
 const { listImmediateChildDirectories } = require('./src/services/superDashboardParentScan');
+const { createAssistantServerManager } = require('./src/services/assistantServer');
 
 let mainWindow;
 let nodeInstallProgress = null;
@@ -128,11 +130,13 @@ ipcMain.handle('fs:exists', async (_event, filePath) => {
 });
 
 // Open folder dialog
-ipcMain.handle('dialog:openDirectory', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+ipcMain.handle('dialog:openDirectory', async (event, options = {}) => {
+    const dialogOptions = {
         properties: ['openDirectory'],
-        title: 'Select Folder to Analyze'
-    });
+        title: (options && options.title) || 'Select Folder to Analyze'
+    };
+    if (options && options.defaultPath) dialogOptions.defaultPath = options.defaultPath;
+    const result = await dialog.showOpenDialog(mainWindow, dialogOptions);
 
     if (result.canceled) {
         return null;
@@ -140,6 +144,13 @@ ipcMain.handle('dialog:openDirectory', async () => {
 
     return result.filePaths[0];
 });
+
+// Local AI assistant server (spawn or reuse)
+const assistantServerDir = process.env.AI_ASSISTANT_DIR || path.resolve(__dirname, '..', '..', 'AI', 'AI assistant');
+const assistantManager = createAssistantServerManager({ serverDir: assistantServerDir });
+ipcMain.handle('assistant:ensure', () => assistantManager.ensureRunning());
+ipcMain.handle('assistant:status', () => assistantManager.status());
+app.on('will-quit', () => assistantManager.stop());
 
 // Analyze folder for code metrics
 ipcMain.handle('analyze:folder', async (event, folderPath) => {
@@ -507,8 +518,12 @@ ipcMain.handle('app:openDetachedWindow', async (event, { app: appData, branch, t
         title: `Voyagerr Lens - ${appData.name}`
     });
 
+    const runId = runStore.register({ app: appData.name, branch: branch || '' });
+    detachedWindow.on('closed', () => runStore.remove(runId));
+
     const params = {
         view: 'detached',
+        runId,
         repoName: appData.name,
         repoUrl: appData.url,
         branch: branch || '',
@@ -520,3 +535,11 @@ ipcMain.handle('app:openDetachedWindow', async (event, { app: appData, branch, t
         query: params 
     });
 });
+
+// Test-run memory for the AI assistant (cleared when the run window closes)
+ipcMain.handle('runs:report', async (event, { runId, result, error } = {}) => {
+    if (error) return runStore.fail(runId, error);
+    return runStore.complete(runId, result);
+});
+
+ipcMain.handle('runs:list', async () => runStore.list());

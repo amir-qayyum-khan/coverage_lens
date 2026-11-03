@@ -1,0 +1,61 @@
+.assistant-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    height: calc(100vh - 140px);
+}
+
+.assistant-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.assistant-loading,
+.assistant-status {
+    opacity: 0.75;
+    font-style: italic;
+}
+
+.assistant-messages {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.assistant-msg {
+    max-width: 75%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    white-space: pre-wrap;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.assistant-msg-user {
+    align-self: flex-end;
+    background: rgba(99, 102, 241, 0.25);
+}
+
+.assistant-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.assistant-input-row {
+    display: flex;
+    gap: 8px;
+}
+
+.assistant-input {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: transparent;
+    color: inherit;
+}

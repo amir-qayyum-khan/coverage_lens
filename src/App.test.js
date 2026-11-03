@@ -2,6 +2,16 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import App from './App';
 
+const mockAssistantSend = jest.fn();
+jest.mock('@ai-assistant/client', () => ({
+    createAssistant: jest.fn(() => ({
+        registerTool: jest.fn(),
+        start: jest.fn(),
+        send: (...a) => mockAssistantSend(...a),
+        health: jest.fn()
+    }))
+}));
+
 // Mock the electronAPI (Dashboard registers progress listeners when that view is opened)
 const mockElectronAPI = {
     selectFolder: jest.fn(),
@@ -275,5 +285,25 @@ describe('App Component', () => {
             // Check for total testable statements (50)
             expect(screen.getAllByText(/50/).length).toBeGreaterThan(0);
         }, { timeout: 2000 });
+    });
+});
+
+describe('App assistant tab', () => {
+    test('chat survives tab switch', async () => {
+        const ready = { running: true, url: 'http://127.0.0.1:7071', ready: true };
+        mockElectronAPI.assistantEnsure = jest.fn().mockResolvedValue(ready);
+        mockElectronAPI.assistantStatus = jest.fn().mockResolvedValue(ready);
+        mockAssistantSend.mockResolvedValue({ type: 'answer', text: 'CoreUI: 80,499 / 106,235 lines covered (75.8%)' });
+        render(<App />);
+        fireEvent.click(screen.getByRole('button', { name: /ai assistant/i }));
+        const input = await screen.findByPlaceholderText(/ask about/i);
+        await waitFor(() => expect(input).not.toBeDisabled());
+        fireEvent.change(input, { target: { value: 'total number of lines cover in wecore' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+        expect(await screen.findByText('CoreUI: 80,499 / 106,235 lines covered (75.8%)')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: /^dashboard$/i }));
+        fireEvent.click(screen.getByRole('button', { name: /ai assistant/i }));
+        expect(screen.getByText('CoreUI: 80,499 / 106,235 lines covered (75.8%)')).toBeInTheDocument();
+        expect(window.electronAPI.assistantEnsure).toHaveBeenCalledTimes(1);
     });
 });

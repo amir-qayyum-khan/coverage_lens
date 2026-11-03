@@ -1,37 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { YOU_APPS, WE_APPS, resolveRemoteCoverageBranches } from '../data/appsCatalog';
-
-/**
- * Coerce a Jest summary field to a finite count (missing or invalid → 0).
- * @param {unknown} n
- * @returns {number}
- */
-function toTestCount(n) {
-    const v = Number(n);
-    return Number.isFinite(v) ? v : 0;
-}
-
-/**
- * Sum passed/failed/total for catalog apps whose Super Dashboard row loaded.
- * Missing test fields count as 0. Incomplete-but-loaded rows are included.
- * @param {Array<{ name: string }>} apps
- * @param {Record<string, string>} rowStatus
- * @param {Record<string, { tests?: { passedTests?: number, failedTests?: number, totalTests?: number } }>} remoteMetrics
- * @returns {{ passedTests: number, failedTests: number, totalTests: number }}
- */
-function sumLoadedTestCounts(apps, rowStatus, remoteMetrics) {
-    let passedTests = 0;
-    let failedTests = 0;
-    let totalTests = 0;
-    for (const app of apps) {
-        if (rowStatus[app.name] !== 'loaded') continue;
-        const tests = remoteMetrics[app.name]?.tests;
-        passedTests += toTestCount(tests?.passedTests);
-        failedTests += toTestCount(tests?.failedTests);
-        totalTests += toTestCount(tests?.totalTests);
-    }
-    return { passedTests, failedTests, totalTests };
-}
+import { YOU_APPS, WE_APPS } from '../data/appsCatalog';
+import { getSavedGitCredentials, fetchAppCoverage, sumLoadedTestCounts, toTestCount } from '../services/remoteCoverage';
 
 /**
  * Super Dashboard — fetches coverage JSON from Gitea remote in parallel.
@@ -70,13 +39,6 @@ function SuperDashboard({
         setTimeout(() => fetchAllCoverage(), 100);
     };
 
-    const getCredentials = () => {
-        try {
-            const saved = localStorage.getItem('git_credentials');
-            return saved ? JSON.parse(saved) : null;
-        } catch { return null; }
-    };
-
     const fetchAllCoverage = useCallback(async () => {
         const allApps = [...YOU_APPS, ...WE_APPS];
         const id = ++fetchIdRef.current;
@@ -88,30 +50,16 @@ function SuperDashboard({
         setRemoteMetrics({});
         setIsFetching(true);
 
-        const creds = getCredentials();
-
         await Promise.allSettled(
             allApps.map(async (app) => {
                 try {
-                    const result = await window.electronAPI.fetchRemoteCoverage(
-                        app.url,
-                        creds,
-                        resolveRemoteCoverageBranches(app)
-                    );
+                    const metrics = await fetchAppCoverage(app);
                     if (id !== fetchIdRef.current) return; // stale
 
-                    if (result.success && result.data?.coverage) {
-                        const cov = result.data.coverage;
+                    if (metrics) {
                         setRemoteMetrics(prev => ({
                             ...prev,
-                            [app.name]: {
-                                lines: cov.lines,
-                                statements: cov.statements,
-                                branches: cov.branches,
-                                branch: result.branch,
-                                generatedAt: result.data.generatedAt,
-                                tests: result.data.tests
-                            }
+                            [app.name]: metrics
                         }));
                         setRowStatus(prev => ({ ...prev, [app.name]: 'loaded' }));
                     } else {
@@ -310,7 +258,7 @@ function SuperDashboard({
         </div>
     );
 
-    const hasNoToken = !getCredentials()?.token;
+    const hasNoToken = !getSavedGitCredentials()?.token;
     const loadedCount = Object.values(rowStatus).filter(s => s === 'loaded').length;
     const totalCount = YOU_APPS.length + WE_APPS.length;
     const youTestTotals = useMemo(

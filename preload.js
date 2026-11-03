@@ -4,7 +4,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
     // Open native folder selection dialog
-    selectFolder: () => ipcRenderer.invoke('dialog:openDirectory'),
+    selectFolder: (options) => ipcRenderer.invoke('dialog:openDirectory', options),
+
+    // Local AI assistant server: start (or reuse) and query status
+    assistantEnsure: () => ipcRenderer.invoke('assistant:ensure'),
+    assistantStatus: () => ipcRenderer.invoke('assistant:status'),
 
     // Analyze a folder for code metrics (lines, statements)
     analyzeFolder: (folderPath) => ipcRenderer.invoke('analyze:folder', folderPath),
@@ -86,6 +90,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Open a detached window for a specific project's progress/details
     openDetachedWindow: (app, branch, targetDir) =>
         ipcRenderer.invoke('app:openDetachedWindow', { app, branch, targetDir }),
+
+    // Report a detached run's results/error to the main-process run store; list stored runs
+    reportRun: (runId, payload) =>
+        ipcRenderer.invoke('runs:report', { runId, ...(payload || {}) }),
+    listRuns: () => ipcRenderer.invoke('runs:list'),
 
     fileExists: (filePath) => ipcRenderer.invoke('fs:exists', filePath)
 });
