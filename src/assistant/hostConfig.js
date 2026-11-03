@@ -5,6 +5,15 @@ const CUSTOM_APP_ALIASES = {
 };
 
 /**
+ * Lowercase name and aliases an app can be referred to by.
+ * @param {string} name
+ * @returns {string[]}
+ */
+function appAliases(name) {
+    return [name.toLowerCase(), ...(CUSTOM_APP_ALIASES[name] || [])];
+}
+
+/**
  * Build the host config sent to the assistant server (YAML key spelling).
  * @param {{ youApps: Array<{ name: string }>, weApps: Array<{ name: string }> }} apps
  * @returns {object}
@@ -12,7 +21,7 @@ const CUSTOM_APP_ALIASES = {
 function buildHostConfig({ youApps, weApps }) {
     const app = {};
     for (const a of [...youApps, ...weApps]) {
-        app[a.name] = CUSTOM_APP_ALIASES[a.name] || [a.name.toLowerCase()];
+        app[a.name] = CUSTOM_APP_ALIASES[a.name] || appAliases(a.name);
     }
     return {
         assistant: {
@@ -66,4 +75,4 @@ function buildHostConfig({ youApps, weApps }) {
     };
 }
 
-module.exports = { buildHostConfig };
+module.exports = { buildHostConfig, appAliases };

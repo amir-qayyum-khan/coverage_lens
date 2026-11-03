@@ -2,6 +2,8 @@ const { repoFolderKeyFromUrl, resolveAppDefaultBranch } = require('../data/appsC
 
 const { sumLoadedCoverage } = require('../services/remoteCoverage');
 
+const { appAliases } = require('./hostConfig');
+
 const METRICS = ['lines', 'statements', 'branches'];
 
 const round1 = (v) => Math.round((Number.isFinite(Number(v)) ? Number(v) : 0) * 10) / 10;
@@ -12,12 +14,25 @@ const parentDir = (p) => {
     return i > 0 ? t.slice(0, i) : undefined;
 };
 
+/** True when the value cannot be a git ref name (whitespace, forbidden chars, bad endings). */
+function isInvalidGitRef(b) {
+    // eslint-disable-next-line no-control-regex
+    if (/[\s~^:?*[\\\x00-\x1f\x7f]/.test(b)) return true;
+    return b.includes('..') || b.includes('@{') || b.startsWith('/') || b.endsWith('/') || b.endsWith('.') || b.endsWith('.lock');
+}
+
+/** Lowercase names and aliases of every known app (a branch equal to one is a mis-extracted app phrase). */
+function knownAppWords(apps) {
+    return new Set(apps.flatMap((a) => appAliases(a.name)));
+}
+
 /**
  * @param {object} deps
  * @returns {{ run_unit_tests: Function, get_coverage: Function, get_test_totals: Function }}
  */
 function createToolHandlers({ electronAPI, youApps, weApps, knownClonePaths, fetchAppCoverage, sumLoadedTestCounts }) {
     const allApps = [...youApps, ...weApps];
+    const appWords = knownAppWords(allApps);
     const findApp = (name) => {
         const app = allApps.find((a) => a.name === name);
         if (!app) throw new Error(`Unknown app: ${name}`);
@@ -33,7 +48,8 @@ function createToolHandlers({ electronAPI, youApps, weApps, knownClonePaths, fet
             defaultPath: hint ? parentDir(hint) : undefined
         });
         if (!folder) throw new Error('No folder selected');
-        const requested = typeof branch === 'string' ? branch.trim() : '';
+        let requested = typeof branch === 'string' ? branch.trim() : '';
+        if (requested && (isInvalidGitRef(requested) || appWords.has(requested.toLowerCase()))) requested = '';
         const resolvedBranch = requested || resolveAppDefaultBranch(catalogApp);
         await electronAPI.openDetachedWindow(catalogApp, resolvedBranch, folder);
         return { app, folder, branch: resolvedBranch };

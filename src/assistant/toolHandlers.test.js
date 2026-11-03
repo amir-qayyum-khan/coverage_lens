@@ -211,3 +211,25 @@ describe('get_group_coverage', () => {
         await expect(handlers.get_group_coverage({})).rejects.toThrow('No coverage data found for all apps');
     });
 });
+
+describe('run_unit_tests branch sanitising', () => {
+    it.each([['core ui'], ['we common'], ['CoreUI'], ['  '], ['Common'], ['launchpadui'], ['a..b'], ['x~1'], ['a:b'], ['foo.lock'], ['dir/']])(
+        'treats %p as no branch',
+        async (branch) => {
+            const { deps, handlers } = make();
+            deps.electronAPI.selectFolder.mockResolvedValue('D:\base');
+            const res = await handlers.run_unit_tests({ app: 'CommonUI', branch }, {});
+            expect(res.branch).toBe(resolveAppDefaultBranch(commonUI));
+        }
+    );
+
+    it.each([['developV2', 'developV2'], [' release/2.1 ', 'release/2.1'], ['develop', 'develop'], ['main', 'main'], ['feature/x-y', 'feature/x-y']])(
+        'passes %p through as %p',
+        async (branch, expected) => {
+            const { deps, handlers } = make();
+            deps.electronAPI.selectFolder.mockResolvedValue('D:\base');
+            const res = await handlers.run_unit_tests({ app: 'CommonUI', branch }, {});
+            expect(res.branch).toBe(expected);
+        }
+    );
+});
