@@ -134,6 +134,17 @@ describe('get_test_totals', () => {
         expect(deps.fetchAppCoverage).toHaveBeenCalledTimes(n);
     });
 
+    it('returns only the named app when app is given', async () => {
+        const { deps, handlers } = make();
+        deps.fetchAppCoverage.mockResolvedValue({ tests: { passedTests: 9, failedTests: 1, totalTests: 10 } });
+        const res = await handlers.get_test_totals({ app: 'LaunchpadUI' });
+        expect(res.group).toBe('LaunchpadUI');
+        expect(res.appsCounted).toBe(1);
+        expect(res.failedTests).toBe(1);
+        expect(deps.fetchAppCoverage).toHaveBeenCalledTimes(1);
+        expect(deps.fetchAppCoverage.mock.calls[0][0].name).toBe('LaunchpadUI');
+    });
+
     it('defaults to all groups', async () => {
         const { deps, handlers } = make();
         deps.fetchAppCoverage.mockResolvedValue({ tests: { passedTests: 1, failedTests: 0, totalTests: 1 } });
@@ -305,7 +316,7 @@ describe('run tools', () => {
 
     it('reports a failed run with the administrator hint', async () => {
         const h = withRuns([doneRun('CoreUI', { status: 'error', error: 'clone failed' })]);
-        await expect(h.get_run_summary({})).rejects.toThrow(/clone failed.*ask your administrator/);
+        await expect(h.get_run_summary({})).rejects.toThrow(/clone failed.*ask your administrator \(amir\.khan@voyagerr\.com\)/);
     });
 
     it('path coverage sums matching files case-insensitively', async () => {
@@ -328,7 +339,7 @@ describe('run tools', () => {
     it('path coverage rejects a term that matches nothing', async () => {
         const h = withRuns([doneRun('CoreUI')]);
         await expect(h.get_run_path_coverage({ path: 'payments' })).rejects.toThrow(
-            'No files in this run match "payments". For anything more complex, ask your administrator.'
+            'No files in this run match "payments". For anything more complex, ask your administrator (amir.khan@voyagerr.com).'
         );
     });
 

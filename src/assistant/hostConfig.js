@@ -1,16 +1,42 @@
+const { askAdministrator } = require('./assistantSettings');
+
 /** Hand-picked aliases that override the generated lowercase-name alias list. */
 const CUSTOM_APP_ALIASES = {
     CommonUI: ['we common', 'common', 'commonui'],
-    CoreUI: ['wecore', 'we core', 'core', 'coreui']
+    CoreUI: ['wecore', 'we core', 'core', 'coreui', 'wecoreui', 'we core ui'],
+    LaunchpadUI: ['launch pad', 'launch pad ui', 'launchpad', 'pad', 'you launch pad', 'youlaunchpad', 'you launchpad']
 };
+
+/**
+ * Names derived from the git repo, e.g. ".../TrapezeDRTPortalsLaunchpadUI.git" gives
+ * "trapezedrtportalslaunchpadui", "portalslaunchpadui", "launchpadui" and "launchpad".
+ * @param {string} [url]
+ * @returns {string[]}
+ */
+function repoAliases(url) {
+    const repo = String(url || '').split('/').pop().replace(/\.git$/i, '');
+    if (!repo) return [];
+    const out = new Set();
+    const add = (v) => {
+        const lower = v.toLowerCase();
+        out.add(lower);
+        if (lower.endsWith('ui') && lower.length > 4) out.add(lower.slice(0, -2));
+    };
+    add(repo);
+    const noPrefix = repo.replace(/^TrapezeDRT/i, '');
+    add(noPrefix);
+    add(noPrefix.replace(/^Portals/i, ''));
+    return [...out];
+}
 
 /**
  * Lowercase name and aliases an app can be referred to by.
  * @param {string} name
+ * @param {string} [url] - git repo URL; its repo name is also accepted
  * @returns {string[]}
  */
-function appAliases(name) {
-    return [name.toLowerCase(), ...(CUSTOM_APP_ALIASES[name] || [])];
+function appAliases(name, url) {
+    return [...new Set([name.toLowerCase(), ...(CUSTOM_APP_ALIASES[name] || []), ...repoAliases(url)])];
 }
 
 /**
@@ -21,13 +47,13 @@ function appAliases(name) {
 function buildHostConfig({ youApps, weApps }) {
     const app = {};
     for (const a of [...youApps, ...weApps]) {
-        app[a.name] = CUSTOM_APP_ALIASES[a.name] || appAliases(a.name);
+        app[a.name] = appAliases(a.name, a.url);
     }
     return {
         assistant: {
             name: 'Voyagerr Assistant',
             scope_message:
-                'I can run unit tests and answer coverage questions for You/We apps and for test runs you have open. For complex questions, please ask your administrator.'
+                `I can run unit tests and answer coverage questions for You/We apps and for test runs you have open. For complex questions, please ${askAdministrator()}.`
         },
         entities: {
             app,
@@ -69,8 +95,12 @@ function buildHostConfig({ youApps, weApps }) {
             },
             {
                 name: 'get_test_totals',
-                description: 'Number of unit tests (passed, failed, total) for a group of apps or all apps',
-                params: { group: { entity: 'group', required: false } }
+                description:
+                    'Number of unit tests (passed, failed, total) from the Super Dashboard data for ONE named app, or for a group of apps, or all apps. Use the app param when the user names a single app',
+                params: {
+                    app: { entity: 'app', required: false },
+                    group: { entity: 'group', required: false }
+                }
             },
             {
                 name: 'get_run_summary',

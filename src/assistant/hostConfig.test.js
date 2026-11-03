@@ -9,6 +9,10 @@ describe('buildHostConfig', () => {
         expect(cfg.entities.app.CommonUI).toEqual(expect.arrayContaining(['we common', 'common', 'commonui']));
         expect(cfg.entities.app.CoreUI).toEqual(expect.arrayContaining(['wecore', 'we core', 'core']));
         expect(cfg.entities.app.LaunchpadUI).toContain('launchpadui');
+        expect(cfg.entities.app.LaunchpadUI).toEqual(
+            expect.arrayContaining(['launch pad', 'pad', 'youlaunchpad', 'trapezedrtportalslaunchpadui', 'portalslaunchpadui'])
+        );
+        expect(cfg.entities.app.CoreUI).toEqual(expect.arrayContaining(['wecoreui', 'trapezedrtcoreui']));
         expect(cfg.entities.group).toEqual({ you: ['you apps', 'you group'], we: ['we apps', 'we group'] });
     });
 
@@ -48,7 +52,7 @@ describe('buildHostConfig', () => {
 
     it('has assistant name and scope_message', () => {
         expect(cfg.assistant.scope_message).toBe(
-            'I can run unit tests and answer coverage questions for You/We apps and for test runs you have open. For complex questions, please ask your administrator.'
+            'I can run unit tests and answer coverage questions for You/We apps and for test runs you have open. For complex questions, please ask your administrator (amir.khan@voyagerr.com).'
         );
     });
 

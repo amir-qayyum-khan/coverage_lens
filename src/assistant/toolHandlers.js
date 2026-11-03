@@ -4,8 +4,10 @@ const { sumLoadedCoverage } = require('../services/remoteCoverage');
 
 const { appAliases } = require('./hostConfig');
 
+const { askAdministrator } = require('./assistantSettings');
+
 const METRICS = ['lines', 'statements', 'branches'];
-const COMPLEX = 'For anything more complex, ask your administrator.';
+const COMPLEX = `For anything more complex, ${askAdministrator()}.`;
 const NO_RUN = 'No test run is open. Ask me to run the unit tests for an app first.';
 const normPath = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
 
@@ -26,7 +28,7 @@ function isInvalidGitRef(b) {
 
 /** Lowercase names and aliases of every known app (a branch equal to one is a mis-extracted app phrase). */
 function knownAppWords(apps) {
-    return new Set(apps.flatMap((a) => appAliases(a.name)));
+    return new Set(apps.flatMap((a) => appAliases(a.name, a.url)));
 }
 
 /**
@@ -71,8 +73,8 @@ function createToolHandlers({ electronAPI, youApps, weApps, knownClonePaths, fet
         return item(metric);
     }
 
-    async function get_test_totals({ group } = {}) { // eslint-disable-line camelcase
-        const apps = group === 'you' ? youApps : group === 'we' ? weApps : allApps;
+    async function get_test_totals({ app, group } = {}) { // eslint-disable-line camelcase
+        const apps = app ? [findApp(app)] : group === 'you' ? youApps : group === 'we' ? weApps : allApps;
         const settled = await Promise.allSettled(apps.map((a) => fetchAppCoverage(a)));
         const rowStatus = {};
         const remoteMetrics = {};
@@ -88,7 +90,7 @@ function createToolHandlers({ electronAPI, youApps, weApps, knownClonePaths, fet
         });
         const totals = sumLoadedTestCounts(apps, rowStatus, remoteMetrics);
         return {
-            group: group || 'all',
+            group: app || group || 'all',
             appsCounted: apps.length - appsWithoutData.length,
             appsWithoutData,
             ...totals
