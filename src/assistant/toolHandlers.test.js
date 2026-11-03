@@ -143,3 +143,71 @@ describe('get_test_totals', () => {
         expect(res.totalTests).toBe(YOU_APPS.length + WE_APPS.length);
     });
 });
+
+describe('get_group_coverage', () => {
+    const blk = (c, t) => ({ lines: cov(c, t), statements: cov(c, t), branches: cov(c, t) });
+
+    it('sums covered/total across the we apps for all metrics', async () => {
+        const { deps, handlers } = make();
+        deps.fetchAppCoverage.mockResolvedValue({
+            lines: { covered: 1, total: 3, pct: 33 },
+            statements: { covered: 2, total: 4, pct: 50 },
+            branches: { covered: 0, total: 0, pct: 0 }
+        });
+        const res = await handlers.get_group_coverage({ group: 'we', metric: 'all' });
+        const n = WE_APPS.length;
+        expect(res.appsCounted).toBe(n);
+        expect(res.appsWithoutData).toEqual([]);
+        expect(res.items).toEqual([
+            { group: 'we apps', metric: 'lines', covered: n, total: 3 * n, pct: 33.3, appsCounted: n },
+            { group: 'we apps', metric: 'statements', covered: 2 * n, total: 4 * n, pct: 50, appsCounted: n },
+            { group: 'we apps', metric: 'branches', covered: 0, total: 0, pct: 0, appsCounted: n }
+        ]);
+    });
+
+    it('returns one item for a single metric and uses the you group', async () => {
+        const { deps, handlers } = make();
+        deps.fetchAppCoverage.mockResolvedValue(blk(1, 4));
+        const res = await handlers.get_group_coverage({ group: 'you', metric: 'branches' });
+        const n = YOU_APPS.length;
+        expect(deps.fetchAppCoverage).toHaveBeenCalledTimes(n);
+        expect(res.items).toEqual([{ group: 'you apps', metric: 'branches', covered: n, total: 4 * n, pct: 25, appsCounted: n }]);
+    });
+
+    it('defaults to all apps', async () => {
+        const { deps, handlers } = make();
+        deps.fetchAppCoverage.mockResolvedValue(blk(1, 2));
+        const res = await handlers.get_group_coverage({ metric: 'lines' });
+        const n = YOU_APPS.length + WE_APPS.length;
+        expect(res.items[0]).toMatchObject({ group: 'all apps', covered: n, total: 2 * n, pct: 50 });
+        expect(res.appsCounted).toBe(n);
+    });
+
+    it('counts failed and null apps in appsWithoutData and skips them in sums', async () => {
+        const { deps, handlers } = make();
+        deps.fetchAppCoverage.mockImplementation(async (app) => {
+            if (app.name === 'CoreUI') return null;
+            if (app.name === 'CommonUI') throw new Error('net');
+            return blk(5, 10);
+        });
+        const res = await handlers.get_group_coverage({ group: 'we', metric: 'lines' });
+        const n = WE_APPS.length - 2;
+        expect([...res.appsWithoutData].sort()).toEqual(['CommonUI', 'CoreUI']);
+        expect(res.appsCounted).toBe(n);
+        expect(res.items[0]).toMatchObject({ covered: 5 * n, total: 10 * n, pct: 50, appsCounted: n });
+    });
+
+    it('gives pct 0 when total is 0', async () => {
+        const { deps, handlers } = make();
+        deps.fetchAppCoverage.mockResolvedValue(blk(0, 0));
+        const res = await handlers.get_group_coverage({ group: 'we', metric: 'lines' });
+        expect(res.items[0]).toMatchObject({ covered: 0, total: 0, pct: 0 });
+    });
+
+    it('throws when no app loaded', async () => {
+        const { deps, handlers } = make();
+        deps.fetchAppCoverage.mockRejectedValue(new Error('x'));
+        await expect(handlers.get_group_coverage({ group: 'we' })).rejects.toThrow('No coverage data found for we apps');
+        await expect(handlers.get_group_coverage({})).rejects.toThrow('No coverage data found for all apps');
+    });
+});

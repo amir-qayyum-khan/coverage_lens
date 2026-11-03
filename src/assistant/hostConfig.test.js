@@ -12,8 +12,15 @@ describe('buildHostConfig', () => {
         expect(cfg.entities.group).toEqual({ you: ['you apps', 'you group'], we: ['we apps', 'we group'] });
     });
 
-    it('defines the three tools', () => {
-        expect(cfg.tools.map((t) => t.name)).toEqual(['run_unit_tests', 'get_coverage', 'get_test_totals']);
+    it('defines get_group_coverage', () => {
+        const t = cfg.tools.find((x) => x.name === 'get_group_coverage');
+        expect(t.params.group).toEqual({ entity: 'group', required: false });
+        expect(t.params.metric).toEqual({ enum: ['lines', 'statements', 'branches', 'all'], default: 'all' });
+        expect(t.answer_template).toBe('{group}: {covered} / {total} {metric} covered ({pct}%) across {appsCounted} apps');
+    });
+
+    it('defines the four tools', () => {
+        expect(cfg.tools.map((t) => t.name)).toEqual(['run_unit_tests', 'get_coverage', 'get_group_coverage', 'get_test_totals']);
         expect(cfg.tools[0].confirm).toBe('folder');
     });
 

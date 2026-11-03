@@ -33,6 +33,28 @@ function sumLoadedTestCounts(apps, rowStatus, remoteMetrics) {
 }
 
 /**
+ * Sum covered/total for one metric over apps whose Super Dashboard row loaded.
+ * Blocks without a numeric total are skipped.
+ * @param {Array<{ name: string }>} apps
+ * @param {Record<string, string>} rowStatus
+ * @param {Record<string, object>} remoteMetrics
+ * @param {'lines'|'statements'|'branches'} metric
+ * @returns {{ covered: number, total: number, pct: number }}
+ */
+function sumLoadedCoverage(apps, rowStatus, remoteMetrics, metric) {
+    let covered = 0;
+    let total = 0;
+    for (const app of apps) {
+        if (rowStatus[app.name] !== 'loaded') continue;
+        const block = remoteMetrics[app.name]?.[metric];
+        if (!block || block.total == null) continue;
+        covered += toTestCount(block.covered);
+        total += toTestCount(block.total);
+    }
+    return { covered, total, pct: total > 0 ? Math.round((covered / total) * 1000) / 10 : 0 };
+}
+
+/**
  * Saved git credentials from localStorage, or null.
  * @returns {{ username: string, token: string } | null}
  */
@@ -66,4 +88,4 @@ async function fetchAppCoverage(app) {
     };
 }
 
-module.exports = { getSavedGitCredentials, fetchAppCoverage, sumLoadedTestCounts, toTestCount };
+module.exports = { getSavedGitCredentials, fetchAppCoverage, sumLoadedTestCounts, sumLoadedCoverage, toTestCount };

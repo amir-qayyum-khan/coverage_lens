@@ -1,5 +1,7 @@
 const { repoFolderKeyFromUrl, resolveAppDefaultBranch } = require('../data/appsCatalog');
 
+const { sumLoadedCoverage } = require('../services/remoteCoverage');
+
 const METRICS = ['lines', 'statements', 'branches'];
 
 const round1 = (v) => Math.round((Number.isFinite(Number(v)) ? Number(v) : 0) * 10) / 10;
@@ -74,7 +76,33 @@ function createToolHandlers({ electronAPI, youApps, weApps, knownClonePaths, fet
         };
     }
 
-    return { run_unit_tests, get_coverage, get_test_totals };
+    async function get_group_coverage({ group, metric } = {}) { // eslint-disable-line camelcase
+        const apps = group === 'you' ? youApps : group === 'we' ? weApps : allApps;
+        const label = group === 'you' ? 'you apps' : group === 'we' ? 'we apps' : 'all apps';
+        const settled = await Promise.allSettled(apps.map((a) => fetchAppCoverage(a)));
+        const rowStatus = {};
+        const remoteMetrics = {};
+        const appsWithoutData = [];
+        settled.forEach((r, i) => {
+            const name = apps[i].name;
+            if (r.status === 'fulfilled' && r.value) {
+                rowStatus[name] = 'loaded';
+                remoteMetrics[name] = r.value;
+            } else {
+                appsWithoutData.push(name);
+            }
+        });
+        const appsCounted = apps.length - appsWithoutData.length;
+        if (appsCounted === 0) throw new Error(`No coverage data found for ${label}`);
+        const wanted = METRICS.includes(metric) ? [metric] : METRICS;
+        const items = wanted.map((m) => {
+            const { covered, total, pct } = sumLoadedCoverage(apps, rowStatus, remoteMetrics, m);
+            return { group: label, metric: m, covered, total, pct, appsCounted };
+        });
+        return { items, appsCounted, appsWithoutData };
+    }
+
+    return { run_unit_tests, get_coverage, get_group_coverage, get_test_totals };
 }
 
 module.exports = { createToolHandlers };

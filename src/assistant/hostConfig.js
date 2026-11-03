@@ -29,7 +29,7 @@ function buildHostConfig({ youApps, weApps }) {
         tools: [
             {
                 name: 'run_unit_tests',
-                description: 'Run Jest unit tests with coverage for one app, optionally on a given git branch',
+                description: 'Run or execute the Jest unit tests and coverage for one app now (clones the repo in a new window), optionally on a given git branch',
                 params: {
                     app: { entity: 'app', required: true },
                     branch: { type: 'string', required: false }
@@ -40,7 +40,7 @@ function buildHostConfig({ youApps, weApps }) {
             },
             {
                 name: 'get_coverage',
-                description: 'Coverage numbers for one app from the Super Dashboard',
+                description: 'Look up the stored coverage numbers (lines, statements, branches) of ONE app from the Super Dashboard, without running tests',
                 params: {
                     app: { entity: 'app', required: true },
                     metric: { enum: ['lines', 'statements', 'branches', 'all'], default: 'all' }
@@ -48,8 +48,18 @@ function buildHostConfig({ youApps, weApps }) {
                 answer_template: '{app}: {covered} / {total} {metric} covered ({pct}%)'
             },
             {
+                name: 'get_group_coverage',
+                description:
+                    'Coverage numbers and total lines/statements/branches summed over a group of apps (You, We) or all apps, from the Super Dashboard data',
+                params: {
+                    group: { entity: 'group', required: false },
+                    metric: { enum: ['lines', 'statements', 'branches', 'all'], default: 'all' }
+                },
+                answer_template: '{group}: {covered} / {total} {metric} covered ({pct}%) across {appsCounted} apps'
+            },
+            {
                 name: 'get_test_totals',
-                description: 'Unit test totals for a group of apps or all apps',
+                description: 'Number of unit tests (passed, failed, total) for a group of apps or all apps',
                 params: { group: { entity: 'group', required: false } }
             }
         ]

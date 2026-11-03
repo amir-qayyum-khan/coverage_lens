@@ -15,6 +15,8 @@ function toolStatusText(tool, params) {
             return `Opening test run for ${app}…`;
         case 'get_coverage':
             return `Fetching coverage for ${app}…`;
+        case 'get_group_coverage':
+            return 'Summing coverage…';
         case 'get_test_totals':
             return 'Summing unit tests…';
         default:
