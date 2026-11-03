@@ -483,6 +483,8 @@ function parseCoverageResults(fullSummary, detailed, folderPath, projectRoot) {
             fileName: path.basename(filePath),
             lines: fileData.lines,
             statements: fileData.statements,
+            functions: fileData.functions,
+            branches: fileData.branches,
             missingLines: []
         };
 

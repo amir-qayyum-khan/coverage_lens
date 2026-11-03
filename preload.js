@@ -91,5 +91,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openDetachedWindow: (app, branch, targetDir) =>
         ipcRenderer.invoke('app:openDetachedWindow', { app, branch, targetDir }),
 
+    // Report a detached run's results/error to the main-process run store; list stored runs
+    reportRun: (runId, payload) =>
+        ipcRenderer.invoke('runs:report', { runId, ...(payload || {}) }),
+    listRuns: () => ipcRenderer.invoke('runs:list'),
+
     fileExists: (filePath) => ipcRenderer.invoke('fs:exists', filePath)
 });

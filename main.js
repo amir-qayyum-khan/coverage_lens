@@ -17,6 +17,7 @@ const { runCoverage } = require('./src/services/coverageRunner');
 const { checkNodeInstalled, checkPackagesInstalled, installNode, TARGET_NODE_VERSION } = require('./src/services/nodeInstaller');
 const { checkGitInstalled, installGit } = require('./src/services/gitChecker');
 const { cloneAndTest, pushCoverageReport } = require('./src/services/gitOperations');
+const runStore = require('./src/services/runStore');
 const { loadCachedSuperDashboardMetrics } = require('./src/services/superDashboardPersist');
 const {
     readKnownClonePathsWithLegacyImport,
@@ -517,8 +518,12 @@ ipcMain.handle('app:openDetachedWindow', async (event, { app: appData, branch, t
         title: `Voyagerr Lens - ${appData.name}`
     });
 
+    const runId = runStore.register({ app: appData.name, branch: branch || '' });
+    detachedWindow.on('closed', () => runStore.remove(runId));
+
     const params = {
         view: 'detached',
+        runId,
         repoName: appData.name,
         repoUrl: appData.url,
         branch: branch || '',
@@ -530,3 +535,11 @@ ipcMain.handle('app:openDetachedWindow', async (event, { app: appData, branch, t
         query: params 
     });
 });
+
+// Test-run memory for the AI assistant (cleared when the run window closes)
+ipcMain.handle('runs:report', async (event, { runId, result, error } = {}) => {
+    if (error) return runStore.fail(runId, error);
+    return runStore.complete(runId, result);
+});
+
+ipcMain.handle('runs:list', async () => runStore.list());

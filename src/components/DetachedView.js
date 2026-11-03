@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import CoverageDetails from './CoverageDetails';
+import { buildRunPayload } from '../utils/runReport';
 
 function DetachedView() {
     const [params] = useState(() => {
@@ -8,7 +9,8 @@ function DetachedView() {
             repoName: p.get('repoName'),
             repoUrl: p.get('repoUrl'),
             branch: p.get('branch'),
-            targetDir: p.get('targetDir')
+            targetDir: p.get('targetDir'),
+            runId: p.get('runId')
         };
     });
 
@@ -30,6 +32,14 @@ function DetachedView() {
             return saved ? JSON.parse(saved) : null;
         } catch { return null; }
     }, []);
+
+    const reportRun = useCallback((payload) => {
+        const api = window.electronAPI;
+        if (!params.runId || !api || typeof api.reportRun !== 'function') return;
+        try {
+            Promise.resolve(api.reportRun(params.runId, payload)).catch(() => {});
+        } catch { /* reporting is best-effort */ }
+    }, [params]);
 
     useEffect(() => {
         const runProcess = async () => {
@@ -58,6 +68,7 @@ function DetachedView() {
 
                 if (!result.success) {
                     setError(result.message || 'Clone & Test failed');
+                    reportRun({ error: result.message || 'Clone & Test failed' });
                     setStatus(s => ({ ...s, state: 'error' }));
                     return;
                 }
@@ -72,12 +83,19 @@ function DetachedView() {
                 if (analysisResult.success) {
                     setAnalysisResults(analysisResult.data);
                 }
+                reportRun({
+                    result: buildRunPayload(
+                        result.data.testResults,
+                        analysisResult.success ? analysisResult.data : null
+                    )
+                });
 
                 setExecutionTime(((Date.now() - startTime) / 1000).toFixed(1));
                 setStatus(s => ({ ...s, state: 'complete', percent: 100 }));
 
             } catch (err) {
                 setError(err.message);
+                reportRun({ error: err.message });
                 setStatus(s => ({ ...s, state: 'error' }));
             } finally {
                 removeListener();
@@ -85,7 +103,7 @@ function DetachedView() {
         };
 
         runProcess();
-    }, [params, getGitCredentials]);
+    }, [params, getGitCredentials, reportRun]);
 
     if (error) {
         return (
