@@ -147,7 +147,7 @@ function AssistantTab({ knownClonePaths = [] }) {
         if (listEndRef.current && listEndRef.current.scrollIntoView) {
             listEndRef.current.scrollIntoView({ block: 'end' });
         }
-    }, [messages, toolStatus]);
+    }, [messages, toolStatus, busy]);
 
     const send = useCallback(async (text) => {
         const message = String(text || '').trim();
@@ -222,7 +222,11 @@ function AssistantTab({ knownClonePaths = [] }) {
                         )}
                     </div>
                 ))}
-                {toolStatus && <div className="assistant-status">{toolStatus}</div>}
+                {(busy || toolStatus) && (
+                    <div className="assistant-status" role="status">
+                        {toolStatus || 'Thinking…'}
+                    </div>
+                )}
                 <div ref={listEndRef} />
             </div>
             <div className="assistant-input-row">

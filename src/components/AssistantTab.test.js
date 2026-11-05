@@ -149,6 +149,25 @@ describe('AssistantTab', () => {
         expect(await screen.findByPlaceholderText(/\/clear to clear the chat/)).toBeInTheDocument();
     });
 
+    test('shows Thinking while waiting for the reply, and between tool steps', async () => {
+        let release;
+        mockSend.mockImplementation((msg, opts) => {
+            setTimeout(() => opts.onToolStart({ tool: 'get_test_totals', params: {} }), 0);
+            return new Promise((resolve) => { release = resolve; });
+        });
+        render(<AssistantTab knownClonePaths={[]} />);
+        await waitFor(() => expect(screen.getByPlaceholderText(/ask about/i)).not.toBeDisabled());
+        ask('how many tests');
+        expect(await screen.findByText('Thinking…')).toBeInTheDocument();
+        expect(await screen.findByText('Summing unit tests…')).toBeInTheDocument();
+        expect(screen.queryByText('Thinking…')).not.toBeInTheDocument();
+        act(() => { mockSend.mock.calls[0][1].onToolEnd({ tool: 'get_test_totals', ok: true }); });
+        expect(await screen.findByText('Thinking…')).toBeInTheDocument();
+        release({ type: 'answer', text: 'done' });
+        expect(await screen.findByText('done')).toBeInTheDocument();
+        await waitFor(() => expect(screen.queryByText('Thinking…')).not.toBeInTheDocument());
+    });
+
     test('shows status text for the run tools', async () => {
         mockSend.mockImplementation((msg, opts) => {
             opts.onToolStart({ tool: 'get_run_path_coverage', params: { path: 'booking' } });
