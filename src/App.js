@@ -358,7 +358,7 @@ function App() {
                             className={`nav-item ${view === 'super' ? 'active' : ''}`}
                             onClick={() => setView('super')}
                         >
-                            Super Dashboard
+                            Report
                         </button>
                         {/* Code Analysis tab hidden for now; the 'analysis' view is still in place */}
                         <button

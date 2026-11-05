@@ -149,14 +149,14 @@ describe('App Component', () => {
         });
     });
 
-    test('renders header with title and Super Dashboard first', () => {
+    test('renders header with title and Report tab first', () => {
         render(<App />);
         expect(screen.getByText('Voyagerr Lens')).toBeInTheDocument();
         expect(screen.getByRole('heading', { name: 'Super Dashboard' })).toBeInTheDocument();
         const nav = document.querySelector('.main-nav');
         expect(nav).toBeTruthy();
         const navButtons = [...nav.querySelectorAll('button')];
-        expect(navButtons[0].textContent).toMatch(/Super Dashboard/i);
+        expect(navButtons[0].textContent).toMatch(/^Report$/);
         expect(navButtons[1].textContent).toMatch(/^Dashboard$/i);
     });
 
